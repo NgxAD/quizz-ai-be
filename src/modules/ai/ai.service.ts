@@ -77,35 +77,69 @@ export class AiService {
       // 4. Validate dữ liệu từ AI
       const validatedQuestions = this.validateAiQuestions(aiQuestions);
 
-      // 5. Lưu vào DB (chưa public)
+      // 5. Return questions WITHOUT saving to DB yet
+      // User will review and click "Save" button before actually saving
+      return {
+        success: true,
+        message: `Đã sinh ${validatedQuestions.length} câu hỏi thành công. Vui lòng xem trước và nhấn "Lưu" để lưu vào hệ thống.`,
+        count: validatedQuestions.length,
+        quizId: finalQuizId,
+        quizTitle: `Đề thi (${new Date().toLocaleString('vi-VN')})`,
+        questions: validatedQuestions.map((q, idx) => ({
+          question: q.question,
+          type: q.type,
+          level: q.level,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation,
+        })),
+        status: 'draft', // Chưa lưu vào DB
+      };
+    } catch (error) {
+      this.logger.error(`[AI] Failed to generate questions: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Save generated questions to database
+   * Called when user clicks "Save" button in frontend
+   */
+  async saveGeneratedQuestions(
+    quizId: string,
+    questions: any[],
+    userId: string,
+  ): Promise<any> {
+    this.logger.log(`[AI] Saving ${questions.length} questions to quiz ${quizId}`);
+
+    try {
       const savedQuestions: any[] = [];
-      for (let i = 0; i < validatedQuestions.length; i++) {
+      
+      for (let i = 0; i < questions.length; i++) {
         const questionData = {
-          content: validatedQuestions[i].question,
-          type: validatedQuestions[i].type,
-          options: validatedQuestions[i].options,
-          correctAnswer: validatedQuestions[i].correctAnswer,
-          explanation: validatedQuestions[i].explanation,
-          level: validatedQuestions[i].level || 'medium',
-          quizId: finalQuizId,
+          content: questions[i].question,
+          type: questions[i].type,
+          options: questions[i].options,
+          correctAnswer: questions[i].correctAnswer,
+          explanation: questions[i].explanation,
+          level: questions[i].level || 'medium',
+          quizId: quizId,
           createdBy: userId,
-          points: this.getPointsByDifficulty(validatedQuestions[i].level || 'medium'),
+          points: this.getPointsByDifficulty(questions[i].level || 'medium'),
           order: i,
-          isActive: false, // Chưa public - để giáo viên duyệt
+          isActive: false,
         };
 
         const savedQuestion = await this.questionModel.create(questionData);
         savedQuestions.push(savedQuestion);
-        this.logger.log(`[AI] Saved question: ${savedQuestion._id}`);
+        this.logger.log(`[AI] Saved question ${i + 1}/${questions.length}: ${savedQuestion._id}`);
       }
 
-      
       return {
         success: true,
-        message: `Đã sinh ${savedQuestions.length} câu hỏi thành công`,
+        message: `Đã lưu ${savedQuestions.length} câu hỏi thành công`,
         count: savedQuestions.length,
-        quizId: finalQuizId,
-        quizTitle: `Đề thi (${new Date().toLocaleString('vi-VN')})`,
+        quizId: quizId,
         questions: savedQuestions.map((q) => ({
           _id: q._id,
           content: q.content,
@@ -116,10 +150,10 @@ export class AiService {
           explanation: q.explanation,
           isActive: q.isActive,
         })),
-        status: 'pending_review',
+        status: 'saved',
       };
     } catch (error) {
-      this.logger.error(`[AI] Failed to generate questions: ${error.message}`);
+      this.logger.error(`[AI] Failed to save questions: ${error.message}`);
       throw error;
     }
   }
