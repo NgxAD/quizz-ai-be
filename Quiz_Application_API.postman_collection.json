@@ -1,0 +1,261 @@
+{
+  "info": {
+    "_postman_id": "quiz-app-backend",
+    "name": "Quiz Application Backend",
+    "description": "Complete API collection for Quiz Application",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"teacher@example.com\",\n  \"password\": \"teacher123\",\n  \"fullName\": \"Thầy Nguyễn Văn A\",\n  \"phoneNumber\": \"0123456789\"\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/auth/register", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "auth", "register"]}
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"teacher@example.com\",\n  \"password\": \"teacher123\"\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/auth/login", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "auth", "login"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/users", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "users"]}
+          }
+        },
+        {
+          "name": "Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/users/{{userId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "users", "{{userId}}"]}
+          }
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Updated Name\",\n  \"bio\": \"Updated bio\"\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/users/{{userId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "users", "{{userId}}"]}
+          }
+        },
+        {
+          "name": "Get User Stats",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{adminToken}}"}],
+            "url": {"raw": "http://localhost:3000/api/users/stats", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "users", "stats"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Quizzes",
+      "item": [
+        {
+          "name": "Create Quiz",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Bài Thi Toán 10 - Chương 1\",\n  \"description\": \"Kiểm tra kiến thức về hàm số\",\n  \"duration\": 45,\n  \"passingPercentage\": 70\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/quizzes", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "quizzes"]}
+          }
+        },
+        {
+          "name": "Get All Quizzes",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/quizzes", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "quizzes"]}
+          }
+        },
+        {
+          "name": "Get Quiz by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/quizzes/{{quizId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "quizzes", "{{quizId}}"]}
+          }
+        },
+        {
+          "name": "Update Quiz",
+          "request": {
+            "method": "PUT",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Title\",\n  \"duration\": 50\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/quizzes/{{quizId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "quizzes", "{{quizId}}"]}
+          }
+        },
+        {
+          "name": "Publish Quiz",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/quizzes/{{quizId}}/publish", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "quizzes", "{{quizId}}", "publish"]}
+          }
+        },
+        {
+          "name": "Get Quiz Stats",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/quizzes/{{quizId}}/stats", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "quizzes", "{{quizId}}", "stats"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Questions",
+      "item": [
+        {
+          "name": "Create Question",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"2 + 2 = ?\",\n  \"type\": \"multiple_choice\",\n  \"quizId\": \"{{quizId}}\",\n  \"options\": [\n    {\"text\": \"3\", \"isCorrect\": false},\n    {\"text\": \"4\", \"isCorrect\": true},\n    {\"text\": \"5\", \"isCorrect\": false},\n    {\"text\": \"6\", \"isCorrect\": false}\n  ],\n  \"points\": 1,\n  \"explanation\": \"2 + 2 = 4\"\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/questions", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "questions"]}
+          }
+        },
+        {
+          "name": "Generate Questions (AI)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quizId\": \"{{quizId}}\",\n  \"topic\": \"Phương trình bậc 2\",\n  \"numberOfQuestions\": 10,\n  \"difficulty\": \"medium\",\n  \"language\": \"vi\"\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/questions/generate", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "questions", "generate"]}
+          }
+        },
+        {
+          "name": "Get Questions by Quiz",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/questions/quiz/{{quizId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "questions", "quiz", "{{quizId}}"]}
+          }
+        },
+        {
+          "name": "Get Question by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/questions/{{questionId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "questions", "{{questionId}}"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Results",
+      "item": [
+        {
+          "name": "Start Quiz",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{studentToken}}"}],
+            "url": {"raw": "http://localhost:3000/api/results/start/{{quizId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "start", "{{quizId}}"]}
+          }
+        },
+        {
+          "name": "Save Answers",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{studentToken}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": [\n    {\"questionId\": \"{{questionId}}\", \"answer\": \"B\"},\n    {\"questionId\": \"{{questionId2}}\", \"answer\": \"true\"}\n  ]\n}"
+            },
+            "url": {"raw": "http://localhost:3000/api/results/{{submissionId}}/save", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "{{submissionId}}", "save"]}
+          }
+        },
+        {
+          "name": "Submit Quiz",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{studentToken}}"}],
+            "url": {"raw": "http://localhost:3000/api/results/{{submissionId}}/submit", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "{{submissionId}}", "submit"]}
+          }
+        },
+        {
+          "name": "Get My Results",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{studentToken}}"}],
+            "url": {"raw": "http://localhost:3000/api/results/user", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "user"]}
+          }
+        },
+        {
+          "name": "Get Quiz Results",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/results/quiz/{{quizId}}", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "quiz", "{{quizId}}"]}
+          }
+        },
+        {
+          "name": "Get Quiz Statistics",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/results/quiz/{{quizId}}/statistics", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "quiz", "{{quizId}}", "statistics"]}
+          }
+        },
+        {
+          "name": "Get Leaderboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "http://localhost:3000/api/results/quiz/{{quizId}}/leaderboard", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["api", "results", "quiz", "{{quizId}}", "leaderboard"]}
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {"key": "token", "value": ""},
+    {"key": "adminToken", "value": ""},
+    {"key": "studentToken", "value": ""},
+    {"key": "userId", "value": ""},
+    {"key": "quizId", "value": ""},
+    {"key": "questionId", "value": ""},
+    {"key": "questionId2", "value": ""},
+    {"key": "submissionId", "value": ""}
+  ]
+}
