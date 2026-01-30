@@ -22,7 +22,7 @@ export class UsersController {
   constructor(private usersService: UsersService) {}
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  @Roles(UserRole.ADMIN)
   async getAllUsers(@Query('role') role?: UserRole) {
     return this.usersService.findAll(role);
   }

@@ -120,4 +120,112 @@ export class AuthService {
       access_token,
     };
   }
+
+  async googleLoginWithCode(code: string) {
+    // This method would exchange the authorization code for tokens
+    // and retrieve user info from Google. For now, this is a placeholder
+    // The actual implementation requires making calls to Google's OAuth endpoints
+    throw new Error('Method not implemented');
+  }
+
+  async updateUserRole(userId: string, role: string) {
+    if (!['student', 'teacher', 'admin'].includes(role)) {
+      throw new BadRequestException('Role không hợp lệ');
+    }
+
+    const userRole = role.toLowerCase() as any;
+    
+    // Prepare update data
+    const updateData: any = { role: userRole };
+    
+    // Only update isTeacherApproved if upgrading to teacher
+    // Otherwise keep the current value to allow switching between roles
+    if (userRole === 'teacher') {
+      updateData.isTeacherApproved = true;
+    }
+    
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true }
+    );
+
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    const payload = {
+      sub: user._id,
+      email: user.email,
+      role: user.role,
+    };
+
+    const access_token = this.jwtService.sign(payload);
+
+    const { password: _, ...userWithoutPassword } = user.toObject();
+
+    return {
+      message: 'Cập nhật role thành công',
+      user: userWithoutPassword,
+      access_token,
+    };
+  }
+
+  async downgradeTeacher(userId: string) {
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { 
+        role: 'student',
+        isTeacherApproved: false
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    const payload = {
+      sub: user._id,
+      email: user.email,
+      role: user.role,
+    };
+
+    const access_token = this.jwtService.sign(payload);
+
+    const { password: _, ...userWithoutPassword } = user.toObject();
+
+    return {
+      message: 'Bỏ quyền giáo viên thành công',
+      user: userWithoutPassword,
+      access_token,
+    };
+  }
+
+  async updateProfile(userId: string, updateProfileDto: any) {
+    const updateData: any = {};
+
+    if (updateProfileDto.fullName) updateData.fullName = updateProfileDto.fullName;
+    if (updateProfileDto.phoneNumber) updateData.phoneNumber = updateProfileDto.phoneNumber;
+    if (updateProfileDto.avatar) updateData.avatar = updateProfileDto.avatar;
+    if (updateProfileDto.dateOfBirth) updateData.dateOfBirth = updateProfileDto.dateOfBirth;
+    if (updateProfileDto.gender) updateData.gender = updateProfileDto.gender;
+
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true }
+    );
+
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    const { password: _, ...userWithoutPassword } = user.toObject();
+
+    return {
+      message: 'Cập nhật hồ sơ thành công',
+      user: userWithoutPassword,
+    };
+  }
 }

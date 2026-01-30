@@ -30,6 +30,12 @@ export class User {
   @Prop()
   bio: string;
 
+  @Prop()
+  dateOfBirth: string;
+
+  @Prop()
+  gender: string;
+
   @Prop({ type: Date, default: null })
   lastLoginAt: Date;
 
@@ -38,6 +44,9 @@ export class User {
 
   @Prop({ required: false })
   googleEmail: string;
+
+  @Prop({ default: false })
+  isTeacherApproved: boolean;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

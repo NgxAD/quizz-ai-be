@@ -216,13 +216,25 @@ export class SubmissionsService {
     let totalPoints = 0;
 
     // Map answers by questionId for faster lookup
-    const answerMap = new Map(answers.map((a) => [a.questionId, a.answer]));
+    const answerMap = new Map(answers.map((a) => [a.questionId.toString(), a.answer]));
+
+    console.log('Calculate score:', {
+      answersCount: answers.length,
+      questionsCount: questions.length,
+      answerMap: Array.from(answerMap.entries()),
+    });
 
     // Tính điểm từng câu
     for (const question of questions) {
       totalPoints += question.points || 1;
 
-      const studentAnswer = answerMap.get(question._id.toString());
+      const questionIdStr = question._id.toString();
+      const studentAnswer = answerMap.get(questionIdStr);
+
+      console.log(`Question ${questionIdStr}:`, {
+        studentAnswer,
+        hasAnswer: !!studentAnswer,
+      });
 
       if (!studentAnswer) {
         // Học sinh bỏ trống
@@ -244,6 +256,15 @@ export class SubmissionsService {
     const score = totalPoints > 0 ? (correctAnswers / questions.length) * 100 : 0;
     const isPassed = score >= passingPercentage;
 
+    console.log('Score calculation result:', {
+      correctAnswers,
+      wrongAnswers,
+      skipped,
+      totalPoints,
+      score: Math.round(score * 100) / 100,
+      isPassed,
+    });
+
     return {
       correctAnswers,
       wrongAnswers,
@@ -260,13 +281,31 @@ export class SubmissionsService {
   private isAnswerCorrect(question: any, studentAnswer: string | string[]): boolean {
     // Cho multiple choice hoặc true/false
     if (question.options && question.options.length > 0) {
-      const correctOption = question.options.find((opt) => opt.isCorrect);
+      // Find the correct option
+      const correctOption = question.options.find((opt: any) => opt.isCorrect);
       if (correctOption) {
-        const correctValue = correctOption.text || correctOption._id?.toString();
-        if (Array.isArray(studentAnswer)) {
-          return studentAnswer.includes(correctValue);
-        }
-        return studentAnswer === correctValue;
+        // Get the correct answer value (text)
+        const correctValue = correctOption.text;
+        
+        // Normalize student answer
+        const studentAnswerValue = Array.isArray(studentAnswer) 
+          ? studentAnswer[0] 
+          : studentAnswer;
+        
+        // Case-insensitive comparison and trim whitespace
+        const normalizedCorrect = (correctValue || '').trim().toLowerCase();
+        const normalizedStudent = (studentAnswerValue || '').trim().toLowerCase();
+        
+        console.log(`Checking answer:`, {
+          questionId: question._id,
+          studentAnswer: studentAnswerValue,
+          correctAnswer: correctValue,
+          studentNormalized: normalizedStudent,
+          correctNormalized: normalizedCorrect,
+          isMatch: normalizedStudent === normalizedCorrect,
+        });
+        
+        return normalizedStudent === normalizedCorrect;
       }
     }
 

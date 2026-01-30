@@ -138,11 +138,13 @@ export class ClassesService {
       throw new NotFoundException('Lớp không tồn tại');
     }
 
+    const joinDate = (classDoc as any).createdAt;
+
     return classDoc.members.map((member: any) => ({
       _id: member._id,
       fullName: member.fullName,
       email: member.email,
-      joinedAt: member.createdAt,
+      joinedAt: joinDate,
     }));
   }
 
