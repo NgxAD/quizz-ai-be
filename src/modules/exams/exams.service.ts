@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { v4 as uuidv4 } from 'uuid';
 import { Quiz, QuizDocument } from '../../schemas/quiz.schema';
 import { Question, QuestionDocument } from '../../schemas/question.schema';
 import { Result, ResultDocument } from '../../schemas/result.schema';
@@ -10,6 +9,7 @@ import { CreateExamDto } from './dtos/create-exam.dto';
 import { UpdateExamDto } from './dtos/update-exam.dto';
 import { UploadAndCreateExamDto } from './dtos/upload-and-create-exam.dto';
 import { AiService } from '../ai/ai.service';
+import { FileParserService } from '../../common/services/file-parser.service';
 
 @Injectable()
 export class ExamsService {
@@ -18,6 +18,7 @@ export class ExamsService {
     @InjectModel(Question.name) private questionModel: Model<QuestionDocument>,
     @InjectModel(Result.name) private resultModel: Model<ResultDocument>,
     private aiService: AiService,
+    private fileParserService: FileParserService,
   ) {}
 
   /**
@@ -33,7 +34,8 @@ export class ExamsService {
       createdBy,
       duration: quizData.duration || 60,
       passingPercentage: quizData.passingPercentage || 50,
-      isPublished: false, // Mặc định là draft
+      examType: quizData.type || 'exercise', // Set examType from type field
+      isPublished: true, // Publish by default khi tạo từ upload/manual
     });
 
     // Xử lý chọn câu hỏi
@@ -56,6 +58,83 @@ export class ExamsService {
   }
 
   /**
+   * Tạo đề thi từ file upload với cấu trúc trống
+   * Giáo viên sẽ điền số lượng câu và chọn đáp án đúng thủ công
+   */
+  async createExamFromFileStructure(
+    uploadAndCreateDto: UploadAndCreateExamDto,
+    numberOfQuestions: number,
+    numberOfAnswersPerQuestion: number,
+    createdBy: string,
+    fileContent?: string,
+    fileName?: string,
+  ) {
+    const finalFileContent = fileContent || uploadAndCreateDto.fileContent;
+    const finalFileName = fileName || uploadAndCreateDto.fileName;
+
+    // Validate inputs
+    if (numberOfQuestions <= 0) {
+      throw new BadRequestException('Số lượng câu hỏi phải lớn hơn 0');
+    }
+
+    if (numberOfAnswersPerQuestion < 2 || numberOfAnswersPerQuestion > 10) {
+      throw new BadRequestException('Số lượng đáp án phải từ 2 đến 10');
+    }
+
+    // Tạo Quiz
+    const quiz = await this.quizModel.create({
+      title: uploadAndCreateDto.title,
+      description: uploadAndCreateDto.description || '',
+      duration: uploadAndCreateDto.duration || 60,
+      passingPercentage: uploadAndCreateDto.passingPercentage || 50,
+      examType: uploadAndCreateDto.type || 'exercise', // Set examType from type field
+      createdBy,
+      isPublished: true,
+      fileContent: finalFileContent || null,
+      fileName: finalFileName || null,
+    });
+
+    // Tạo câu hỏi trống với cấu trúc A, B, C, D...
+    const questionIds: string[] = [];
+    const answerLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+    
+    for (let i = 0; i < numberOfQuestions; i++) {
+      // Tạo cấu trúc đáp án
+      const options: Array<{ text: string; isCorrect: boolean }> = [];
+      const numAnswers = Math.min(numberOfAnswersPerQuestion, answerLetters.length);
+      
+      for (let j = 0; j < numAnswers; j++) {
+        options.push({
+          text: answerLetters[j],
+          isCorrect: false, // Giáo viên sẽ chọn đáp án đúng
+        });
+      }
+
+      const question = await this.questionModel.create({
+        content: `Câu ${i + 1}`, // Placeholder question name
+        type: 'multiple_choice',
+        options,
+        correctAnswer: '', // Will be set by teacher
+        quizId: quiz._id,
+        createdBy,
+        order: i,
+      });
+
+      questionIds.push(question._id.toString());
+    }
+
+    // Update quiz with questions
+    quiz.questions = questionIds;
+    quiz.totalQuestions = questionIds.length;
+    await quiz.save();
+
+    return this.quizModel
+      .findById(quiz._id)
+      .populate('createdBy', '-password')
+      .populate('questions');
+  }
+
+  /**
    * Tạo đề thi từ file upload
    * Tự động tạo questions từ content trích xuất
    */
@@ -66,9 +145,51 @@ export class ExamsService {
       options: string[];
       correctAnswer: number;
       type?: string;
+      image?: string; // base64 image data
     }>,
     createdBy: string,
+    fileContent?: string,
+    fileName?: string,
+    examType?: 'exercise' | 'test',
   ) {
+    // Use fileContent and fileName from parameters if provided, otherwise from DTO
+    const finalFileContent = fileContent || uploadAndCreateDto.fileContent;
+    const finalFileName = fileName || uploadAndCreateDto.fileName;
+
+    // Check if questions are empty or invalid (all content is 'Câu hỏi' default)
+    const areQuestionsEmpty = !extractedQuestions || extractedQuestions.length === 0 ||
+      extractedQuestions.every(q =>
+        !q.content?.trim() || 
+        q.content === 'Câu hỏi' ||
+        !q.options?.some((opt: any) => opt && opt.text && opt.text.trim())
+      );
+
+    // If questions are empty but fileContent exists, parse fileContent instead
+    let questionsToCreate = extractedQuestions;
+    if (areQuestionsEmpty && finalFileContent) {
+      console.log('Questions are empty, parsing fileContent instead...');
+      console.log('fileContent length:', finalFileContent.length);
+      console.log('fileContent preview:', finalFileContent.substring(0, 300));
+      
+      const normalizedText = this.fileParserService.normalizeText(finalFileContent);
+      console.log('normalizedText length:', normalizedText.length);
+      console.log('normalizedText preview:', normalizedText.substring(0, 300));
+      
+      const parsedQuestions = this.fileParserService.extractQuestions(normalizedText);
+      
+      if (parsedQuestions && parsedQuestions.length > 0) {
+        console.log(`Parsed ${parsedQuestions.length} questions from fileContent`);
+        console.log('First parsed question:', {
+          content: parsedQuestions[0].content.substring(0, 50),
+          options: parsedQuestions[0].options,
+          correctAnswer: parsedQuestions[0].correctAnswer,
+        });
+        questionsToCreate = parsedQuestions;
+      } else {
+        console.log('File parser returned no questions');
+      }
+    }
+
     // Tạo Quiz
     const quiz = await this.quizModel.create({
       title: uploadAndCreateDto.title,
@@ -76,16 +197,54 @@ export class ExamsService {
       duration: uploadAndCreateDto.duration || 60,
       passingPercentage: uploadAndCreateDto.passingPercentage || 50,
       createdBy,
-      isPublished: false,
+      isPublished: true, // Publish by default when created from file/manual
+      fileContent: finalFileContent || null,
+      fileName: finalFileName || null,
+      examType: examType || 'exercise', // Default to exercise if not provided
     });
 
     // Tạo Questions từ extracted data
     const questionIds: string[] = [];
-    for (const extractedQ of extractedQuestions) {
-      const questionOptions = (extractedQ.options || []).map((opt, idx) => ({
-        text: opt,
-        isCorrect: idx === extractedQ.correctAnswer,
-      }));
+    for (const extractedQ of questionsToCreate) {
+      // Validate that question has content and options
+      if (!extractedQ.content?.trim()) {
+        console.warn('Skipping question with empty content:', extractedQ);
+        continue;
+      }
+
+      // Validate that at least one option has non-empty text
+      const hasValidOption = extractedQ.options?.some((opt: any) => {
+        const optText = typeof opt === 'string' ? opt : opt?.text;
+        return optText && optText.trim();
+      });
+
+      if (!hasValidOption) {
+        console.warn('Question has no valid options (all empty):', {
+          content: extractedQ.content.substring(0, 50),
+          options: extractedQ.options,
+        });
+        throw new BadRequestException(
+          `Question "${extractedQ.content.substring(0, 50)}" has no valid answer options. ` +
+          `Please ensure the file contains complete questions with all options.`
+        );
+      }
+
+      // Normalize options to ensure consistent format
+      const questionOptions = this.normalizeOptions(
+        extractedQ.options || [],
+        extractedQ.correctAnswer,
+      );
+
+      // Find the correct answer text from options
+      const correctOption = questionOptions.find((opt) => opt.isCorrect);
+      const correctAnswerText = correctOption ? correctOption.text : '';
+
+      console.log(`Creating question:`, {
+        content: extractedQ.content.substring(0, 50),
+        options: questionOptions,
+        correctAnswerText,
+        extractedCorrectAnswer: extractedQ.correctAnswer,
+      });
 
       // Convert type from MULTIPLE_CHOICE to multiple_choice
       let questionType = 'multiple_choice';
@@ -97,8 +256,15 @@ export class ExamsService {
         content: extractedQ.content,
         type: questionType,
         options: questionOptions,
+        correctAnswer: correctAnswerText,
         quizId: quiz._id,
         createdBy,
+        image: extractedQ.image, // Save image if provided
+      });
+
+      console.log(`Created question ${question._id}:`, {
+        options: question.options,
+        correctAnswer: question.correctAnswer,
       });
 
       questionIds.push(question._id.toString());
@@ -108,6 +274,11 @@ export class ExamsService {
     quiz.questions = questionIds;
     quiz.totalQuestions = questionIds.length;
     await quiz.save();
+
+    console.log(`Created exam with ${questionIds.length} questions`, {
+      quizId: quiz._id,
+      quizTitle: quiz.title,
+    });
 
     return this.quizModel
       .findById(quiz._id)
@@ -198,25 +369,97 @@ export class ExamsService {
   /**
    * Lấy chi tiết đề thi
    */
-  async findById(id: string, userId?: string) {
-    const quiz = await this.quizModel
-      .findById(id)
-      .populate('createdBy', '-password')
-      .populate('subjectId')
-      .populate('questions');
+  async findById(id: string, userId?: string, userRole?: string) {
+    try {
+      // First get the quiz without populating questions
+      let quiz = await this.quizModel
+        .findById(id)
+        .populate('createdBy', '-password')
+        .populate('subjectId');
 
-    if (!quiz) {
-      throw new NotFoundException('Đề thi không tồn tại');
-    }
+      if (!quiz) {
+        throw new NotFoundException('Đề thi không tồn tại');
+      }
 
-    // Học sinh chỉ xem được đề thi công bố
-    if (userId && quiz.createdBy.toString() !== userId) {
-      if (!quiz.isPublished) {
-        throw new ForbiddenException('Đề thi này chưa được công bố');
+      // Manually fetch questions to handle null/deleted questions better
+      if (quiz.questions && Array.isArray(quiz.questions) && quiz.questions.length > 0) {
+        try {
+          const questionIds = quiz.questions.filter(q => q != null);
+          console.log(`Loading ${questionIds.length} questions for quiz ${id}`);
+          
+          if (questionIds.length > 0) {
+            const questions = await this.questionModel
+              .find({ _id: { $in: questionIds } });
+            
+            console.log(`Found ${questions.length} questions in database`);
+            
+            // Log first 2 questions for debugging
+            if (questions.length > 0) {
+              console.log('First question sample:', {
+                _id: questions[0]._id,
+                content: questions[0].content.substring(0, 50),
+                options: questions[0].options,
+                correctAnswer: questions[0].correctAnswer,
+              });
+            }
+            
+            // Maintain the order from quiz.questions
+            const orderedQuestions: any[] = [];
+            const questionMap = new Map(questions.map(q => [q._id.toString(), q]));
+            
+            for (const qId of questionIds) {
+              const q = questionMap.get(qId.toString());
+              if (q) {
+                orderedQuestions.push(q);
+              }
+            }
+            
+            quiz.questions = orderedQuestions;
+            console.log(`Successfully loaded ${orderedQuestions.length} questions for quiz ${id}`);
+          } else {
+            quiz.questions = [];
+          }
+        } catch (questionsError) {
+          console.error('Error loading questions:', questionsError);
+          // If questions fail to load, try one more time with populate
+          try {
+            console.log('Attempting fallback question loading...');
+            const quizWithQuestions = await this.quizModel
+              .findById(id)
+              .populate('questions');
+            if (quizWithQuestions && quizWithQuestions.questions) {
+              quiz.questions = (quizWithQuestions.questions as any[]).filter(q => q != null) as any;
+              console.log(`Fallback loaded ${quiz.questions.length} questions`);
+            } else {
+              quiz.questions = [];
+            }
+          } catch (fallbackError) {
+            console.error('Fallback question loading also failed:', fallbackError);
+            quiz.questions = [];
+          }
+        }
+      }
+
+      return quiz;
+    } catch (error) {
+      console.error('Error in findById:', error);
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      // Fallback: Return quiz without questions if anything fails
+      try {
+        const quiz = await this.quizModel.findById(id);
+        if (!quiz) {
+          throw new NotFoundException('Đề thi không tồn tại');
+        }
+        quiz.questions = [] as any; // Return with empty questions as fallback
+        console.log('Returning quiz without questions due to error');
+        return quiz;
+      } catch (fallbackErr) {
+        console.error('Complete failure in fallback:', fallbackErr);
+        throw new NotFoundException('Đề thi không tồn tại');
       }
     }
-
-    return quiz;
   }
 
   /**
@@ -248,6 +491,30 @@ export class ExamsService {
    * Cập nhật đề thi với danh sách câu hỏi
    * Dùng khi user tạo đề thi thủ công và thêm câu hỏi
    */
+  /**
+   * Normalize options để đảm bảo format consistent: {text: string, isCorrect: boolean}[]
+   */
+  private normalizeOptions(
+    options: any[],
+    correctAnswerIndex?: number,
+  ): Array<{ text: string; isCorrect: boolean }> {
+    if (!options || options.length === 0) return [];
+
+    // Nếu là string array - convert thành object array
+    if (typeof options[0] === 'string') {
+      return options.map((opt, idx) => ({
+        text: String(opt || ''),
+        isCorrect: correctAnswerIndex !== undefined ? idx === correctAnswerIndex : false,
+      }));
+    }
+
+    // Nếu đã là object array - ensure format consistent
+    return options.map((opt: any) => ({
+      text: String(opt.text || ''),
+      isCorrect: Boolean(opt.isCorrect || false),
+    }));
+  }
+
   async updateExamWithQuestions(
     id: string,
     body: {
@@ -255,12 +522,14 @@ export class ExamsService {
       description?: string;
       duration?: number;
       passingPercentage?: number;
+      type?: 'exercise' | 'test';
       questions: Array<{
         _id?: string;
         content: string;
-        type: 'multiple-choice' | 'essay' | 'short-answer';
+        type: 'multiple-choice' | 'essay' | 'short-answer' | 'true-false';
         options?: Array<{ text: string; isCorrect: boolean }>;
         answer?: string;
+        explanation?: string;
       }>;
     },
     userId: string,
@@ -279,42 +548,69 @@ export class ExamsService {
     quiz.description = body.description || '';
     quiz.duration = body.duration || 60;
     quiz.passingPercentage = body.passingPercentage || 50;
+    if (body.type) {
+      quiz.examType = body.type;
+    }
 
     // Process questions
     const questionIds: string[] = [];
-    for (const questionData of body.questions) {
-      if (questionData._id && !questionData._id.startsWith('temp_')) {
-        // Update existing question
-        const question = await this.questionModel.findById(questionData._id);
-        if (question) {
-          question.content = questionData.content;
-          question.type = this.mapStringToQuestionType(questionData.type);
-          if (questionData.type === 'multiple-choice') {
-            question.options = questionData.options || [];
-          }
-          if (questionData.type === 'short-answer' || questionData.type === 'essay') {
+    try {
+      for (const questionData of body.questions) {
+        if (questionData._id && !questionData._id.startsWith('temp_')) {
+          // Update existing question
+          const question = await this.questionModel.findById(questionData._id);
+          if (question) {
+            question.content = questionData.content;
+            question.type = this.mapStringToQuestionType(questionData.type);
+            
+            // Handle options
+            if (questionData.type === 'multiple-choice' && questionData.options) {
+              question.options = this.normalizeOptions(questionData.options);
+            } else {
+              question.options = [];
+            }
+            
+            // Update correctAnswer for all question types
             if (questionData.answer) {
               question.correctAnswer = questionData.answer;
+            } else {
+              question.correctAnswer = '';
             }
+            
+            // Update explanation
+            if (questionData.explanation) {
+              question.explanation = questionData.explanation;
+            } else {
+              question.explanation = '';
+            }
+            
+            await question.save();
+            questionIds.push(question._id.toString());
+          } else {
+            throw new NotFoundException(`Question with id ${questionData._id} not found`);
           }
-          await question.save();
-          questionIds.push(question._id.toString());
+        } else {
+          // Create new question
+          const newQuestion = await this.questionModel.create({
+            content: questionData.content,
+            type: this.mapStringToQuestionType(questionData.type),
+            options: questionData.type === 'multiple-choice'
+              ? this.normalizeOptions(questionData.options || [])
+              : undefined,
+            correctAnswer: (questionData.type === 'short-answer' || questionData.type === 'essay' || questionData.type === 'multiple-choice')
+              ? questionData.answer
+              : undefined,
+            explanation: questionData.explanation,
+            isActive: true,
+            createdBy: userId,
+            quizId: id, // Add the quiz ID
+          });
+          questionIds.push(newQuestion._id.toString());
         }
-      } else {
-        // Create new question
-        const newQuestion = await this.questionModel.create({
-          _id: uuidv4(),
-          content: questionData.content,
-          type: this.mapStringToQuestionType(questionData.type),
-          options: questionData.type === 'multiple-choice' ? questionData.options : undefined,
-          correctAnswer: (questionData.type === 'short-answer' || questionData.type === 'essay') 
-            ? questionData.answer 
-            : undefined,
-          isActive: true,
-          createdBy: userId,
-        });
-        questionIds.push(newQuestion._id.toString());
       }
+    } catch (error: any) {
+      console.error('Error processing questions:', error);
+      throw error;
     }
 
     // Update quiz with questions

@@ -28,17 +28,29 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Ensure role is lowercase
+    const userRole = (role || 'student').toLowerCase();
+
     const user = await this.userModel.create({
       email,
       password: hashedPassword,
       fullName,
-      role: role || 'STUDENT',
+      role: userRole,
     });
+
+    const payload = {
+      sub: user._id,
+      email: user.email,
+      role: user.role,
+    };
+
+    const access_token = this.jwtService.sign(payload);
 
     const { password: _, ...userWithoutPassword } = user.toObject();
     return {
       message: 'Đăng ký thành công',
       user: userWithoutPassword,
+      access_token,
     };
   }
 

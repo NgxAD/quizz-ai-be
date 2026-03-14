@@ -134,4 +134,18 @@ export class ClassesController {
     await this.classesService.assignExamToClass(classId, examId);
     return { success: true };
   }
+
+  /**
+   * DELETE /classes/:classId/exams/:examId
+   * Remove exam from class
+   */
+  @Delete(':classId/exams/:examId')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  async removeExamFromClass(
+    @Param('classId') classId: string,
+    @Param('examId') examId: string,
+  ) {
+    await this.classesService.removeExamFromClass(classId, examId);
+    return { success: true };
+  }
 }

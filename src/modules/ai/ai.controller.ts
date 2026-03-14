@@ -83,4 +83,45 @@ export class AiController {
   ) {
     return this.aiService.validateContent(topic, numberOfQuestions, difficulty);
   }
+
+  /**
+   * POST /ai/chat/initialize
+   * Initialize chat conversation
+   * Creates a draft quiz to attach questions
+   */
+  @Post('chat/initialize')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  @HttpCode(201)
+  async initializeChat(@GetUser() user: any) {
+    return this.aiService.initializeChat(user.userId);
+  }
+
+  /**
+   * POST /ai/chat/message
+   * Send message in chat conversation
+   * Can handle:
+   * - Creating new questions
+   * - Editing all questions
+   * - Editing specific questions
+   */
+  @Post('chat/message')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  @HttpCode(200)
+  async chatMessage(
+    @Body()
+    payload: {
+      conversationId: string;
+      message: string;
+      currentQuestions: any[];
+    },
+    @GetUser() user: any,
+  ) {
+    return this.aiService.chatMessage(
+      payload.conversationId,
+      payload.message,
+      payload.currentQuestions,
+      user.userId,
+    );
+  }
 }
+

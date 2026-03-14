@@ -12,7 +12,7 @@ export class RegisterDto {
   @IsString()
   fullName: string;
 
-  @IsEnum(UserRole)
+  @IsString()
   @IsOptional()
-  role?: UserRole = UserRole.STUDENT;
+  role?: string;
 }

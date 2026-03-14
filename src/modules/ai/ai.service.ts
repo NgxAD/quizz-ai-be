@@ -61,10 +61,10 @@ export class AiService {
         description: `Đề thi được tạo bằng AI`,
         createdBy: userId,
         questions: [],
-        isPublished: false,
+        isPublished: false, // Chưa publish vì chưa lưu câu hỏi
       });
       const finalQuizId = newQuiz._id.toString();
-      this.logger.log(`[AI] Created new quiz: ${finalQuizId}`);
+      this.logger.log(`[AI] Created new quiz (draft): ${finalQuizId}`);
 
       // 3. Gửi prompt cho AI và nhận kết quả
       const aiQuestions = await this.generateAiQuestions(
@@ -77,7 +77,15 @@ export class AiService {
       // 4. Validate dữ liệu từ AI
       const validatedQuestions = this.validateAiQuestions(aiQuestions);
 
-      // 5. Return questions WITHOUT saving to DB yet
+      // 5. Validate topic relevance - ensure questions match requested topic
+      const topicRelevanceScore = this.validateTopicRelevance(validatedQuestions, customPrompt);
+      this.logger.log(`[AI] Topic relevance score: ${topicRelevanceScore}%`);
+      
+      if (topicRelevanceScore < 50) {
+        this.logger.warn(`[AI] Topic relevance LOW (${topicRelevanceScore}%). Some questions may not match the requested topic.`);
+      }
+
+      // 6. Return questions WITHOUT saving to DB yet
       // User will review and click "Save" button before actually saving
       return {
         success: true,
@@ -86,7 +94,7 @@ export class AiService {
         quizId: finalQuizId,
         quizTitle: `Đề thi (${new Date().toLocaleString('vi-VN')})`,
         questions: validatedQuestions.map((q, idx) => ({
-          question: q.question,
+          content: q.question,
           type: q.type,
           level: q.level,
           options: q.options,
@@ -114,10 +122,14 @@ export class AiService {
 
     try {
       const savedQuestions: any[] = [];
+      const questionIds: any[] = [];
       
       for (let i = 0; i < questions.length; i++) {
+        // Handle both 'content' (from frontend) and 'question' (internal) field names
+        const questionContent = questions[i].content || questions[i].question;
+        
         const questionData = {
-          content: questions[i].question,
+          content: questionContent,
           type: questions[i].type,
           options: questions[i].options,
           correctAnswer: questions[i].correctAnswer,
@@ -132,8 +144,20 @@ export class AiService {
 
         const savedQuestion = await this.questionModel.create(questionData);
         savedQuestions.push(savedQuestion);
+        questionIds.push(savedQuestion._id);
         this.logger.log(`[AI] Saved question ${i + 1}/${questions.length}: ${savedQuestion._id}`);
       }
+
+      // Update quiz: add question IDs and publish
+      await this.quizModel.findByIdAndUpdate(
+        quizId,
+        {
+          questions: questionIds,
+          isPublished: true, // Publish quiz khi đã có câu hỏi
+        },
+        { new: true }
+      );
+      this.logger.log(`[AI] Published quiz ${quizId} with ${questionIds.length} questions`);
 
       return {
         success: true,
@@ -276,6 +300,42 @@ export class AiService {
     // Default to 5 if no number found
     return 5;
   }
+
+  /**
+   * Parse topic requirement from user prompt
+   * Extracts subject, grade level, and specific topics
+   */
+  private parseTopicRequirement(prompt: string): {
+    subject?: string;
+    grade?: string;
+    topic?: string;
+  } {
+    const lowerPrompt = prompt.toLowerCase();
+    let result: any = {};
+
+    // Extract subject (Toán, Lý, Hóa, Anh, Sử, Địa, Sinh, etc.)
+    const subjects = ['toán', 'lý', 'hóa', 'anh', 'sử', 'địa', 'sinh', 'công nghệ', 'tin học', 'thể dục', 'âm nhạc', 'mỹ thuật'];
+    for (const subject of subjects) {
+      if (lowerPrompt.includes(subject)) {
+        result.subject = subject;
+        break;
+      }
+    }
+
+    // Extract grade level (lớp X, class X, grade X)
+    const gradeMatch = prompt.match(/(?:lớp|class|grade)\s*(\d+)/i);
+    if (gradeMatch) {
+      result.grade = gradeMatch[1];
+    }
+
+    // Extract specific topic/chapter
+    const chapterMatch = prompt.match(/(?:chương|chapter|bài|lesson)\s*(\d+)/i);
+    if (chapterMatch) {
+      result.topic = `chương ${chapterMatch[1]}`;
+    }
+
+    return result;
+  }
   /**
    * STEP 1: Generate test content in free text format
    */
@@ -285,6 +345,10 @@ export class AiService {
     numberOfQuestions: number,
   ): Promise<string> {
     try {
+      // Parse the topic to extract key requirements
+      const topicInfo = this.parseTopicRequirement(customPrompt);
+      const topicEmphasis = `**LƯU Ý QUAN TRỌNG**: TẤT CẢ ${numberOfQuestions} câu hỏi phải liên quan TRỰC TIẾP đến: ${customPrompt}. KHÔNG ĐƯỢC tạo câu hỏi ngẫu nhiên hoặc không liên quan!`;
+
       const response = await axios.post(
         `https://api.groq.com/openai/v1/chat/completions`,
         {
@@ -292,26 +356,40 @@ export class AiService {
           messages: [
             {
               role: 'user',
-              content: `You are an expert English teacher. Create a multiple-choice test with **EXACTLY ${numberOfQuestions} questions** based on the following:
+              content: `Bạn là một giáo viên chuyên nghiệp. Nhiệm vụ của bạn là tạo một bài kiểm tra có **CHÍNH XÁC ${numberOfQuestions} CÂU HỎI HOÀN CHỈNH**.
 
-Topic/Requirement: ${customPrompt}
+${topicEmphasis}
 
-Format (free text, not JSON):
-- Number each question clearly: Question 1:, Question 2:, ... Question ${numberOfQuestions}:
-- Each question clearly shows the 4 options (A, B, C, D)
-- Each question has 1 correct answer
-- Include a brief explanation for each question
-- Make each question completely different from the others
-- CRITICAL: Create EXACTLY ${numberOfQuestions} questions - not less, not more
+Yêu cầu/Chủ đề: ${customPrompt}
 
-Do NOT output JSON. Just write the questions naturally with clear numbering.`,
+YÊU CẦU TUYỆT ĐỐI (KHÔNG ĐƯỢC BỎ QUA):
+1. Tạo CHÍNH XÁC ${numberOfQuestions} câu hỏi - KHÔNG phải 10, KHÔNG phải 15, CHÍNH XÁC ${numberOfQuestions}
+2. **QUAN TRỌNG**: TẤT CẢ câu hỏi phải liên quan trực tiếp đến chủ đề "${customPrompt}" - KHÔNG được tạo câu hỏi về chủ đề khác
+3. Mỗi câu HÃY CÓ số thứ tự: "Câu 1:", "Câu 2:", ... "Câu ${numberOfQuestions}:"
+4. Mỗi câu HÃY CÓ đúng 4 phương án được đánh số: A), B), C), D)
+5. THỂ HIỆN RÕ đáp án nào đúng: dùng "(ĐÚNG)" hoặc "✓" ở bên cạnh đáp án
+6. Mỗi câu HÃY CÓ một lời giải thích chi tiết BẰNG TIẾNG VIỆT
+7. Các câu hỏi phải khác nhau, đa dạng, nhưng TẤT CẢ đều về chủ đề: ${customPrompt}
+8. CUỐI CÙNG: Viết "TỔNG CỘNG: ${numberOfQuestions} câu hỏi đã được tạo ✓"
+
+Ví dụ định dạng:
+Câu 1: [Câu hỏi về chủ đề "${customPrompt}"]?
+A) [Lựa chọn 1]
+B) [Lựa chọn 2] (ĐÚNG)
+C) [Lựa chọn 3]
+D) [Lựa chọn 4]
+Lời giải: [Giải thích chi tiết liên quan đến "${customPrompt}"]
+
+---
+
+Bây giờ hãy tạo CHÍNH XÁC ${numberOfQuestions} câu hỏi, TẤT CẢ liên quan đến: "${customPrompt}":`,
             },
           ],
-          temperature: 0.8,
-          max_tokens: 2000,
+          temperature: 0.7,
+          max_tokens: Math.max(4000, numberOfQuestions * 250),
         },
         {
-          timeout: 60000,
+          timeout: 90000,
           headers: {
             'Authorization': `Bearer ${this.groqApiKey}`,
             'Content-Type': 'application/json',
@@ -324,6 +402,12 @@ Do NOT output JSON. Just write the questions naturally with clear numbering.`,
       }
 
       const content = response.data.choices[0].message.content;
+      this.logger.log(`[AI] Step 1: Generated content, length: ${content.length} chars`);
+      
+      // Count how many questions appear in the generated text
+      const questionMatches = content.match(/Câu\s+\d+:|Question\s+\d+:/gi) || [];
+      this.logger.log(`[AI] Step 1: Found ${questionMatches.length} question headers in response`);
+      
       return content;
     } catch (error: any) {
       this.logger.error(`[AI] Step 1 (generate text) failed: ${error.message}`);
@@ -338,6 +422,12 @@ Do NOT output JSON. Just write the questions naturally with clear numbering.`,
     const requestedCount = this.extractNumberOfQuestions(aiGeneratedText);
     
     try {
+      this.logger.log(`[AI] Step 2: Converting ${requestedCount} questions to JSON format...`);
+      
+      // First, extract raw questions from text to validate we have them
+      const rawQuestionCount = (aiGeneratedText.match(/Câu\s+\d+:|Question\s+\d+:/gi) || []).length;
+      this.logger.log(`[AI] Step 2: Raw question count from text: ${rawQuestionCount}`);
+
       const response = await axios.post(
         `https://api.groq.com/openai/v1/chat/completions`,
         {
@@ -345,49 +435,48 @@ Do NOT output JSON. Just write the questions naturally with clear numbering.`,
           messages: [
             {
               role: 'user',
-              content: `Convert the following test content into VALID JSON.
+              content: `Bạn là một chuyên gia JSON. Chuyển đổi nội dung bài kiểm tra sau thành định dạng JSON hợp lệ.
 
-Rules:
-- Output ONLY valid JSON array
-- No markdown, no code blocks
-- Each string must be single-line (escape newlines as \\n)
-- Escape all special characters properly
-- Level MUST be one of: "easy", "medium", "hard" (NOT elementary, advanced, etc)
-- IMPORTANT: Option text MUST include "A. ", "B. ", "C. ", "D. " prefix
-- correctAnswer MUST be one of: "A", "B", "C", "D" (single letter only)
-- Array of objects with: question, options, correctAnswer, explanation
-- CRITICAL: Return ALL questions from the input. Do not skip any.
+TUYỆT ĐỐI: Bạn phải bao gồm TẤT CẢ câu hỏi từ input. Không được bỏ qua, gộp, hoặc loại bỏ bất kỳ câu nào.
 
-Target format:
-[
-  {
-    "question": "Question text here",
-    "type": "multiple_choice",
-    "level": "easy",
-    "options": [
-      { "text": "A. Option A", "isCorrect": true },
-      { "text": "B. Option B", "isCorrect": false },
-      { "text": "C. Option C", "isCorrect": false },
-      { "text": "D. Option D", "isCorrect": false }
-    ],
-    "correctAnswer": "A",
-    "explanation": "Explanation text here"
-  }
-]
+Quy tắc định dạng:
+- CHỈ xuất mảng JSON hợp lệ - không có markdown, không giải thích, không có text thừa
+- Type phải là: "multiple_choice"
+- Level phải là: "easy", "medium", hoặc "hard" (chữ thường)
+- correctAnswer phải là một ký tự: "A", "B", "C", "D"
+- Text tùy chọn phải bao gồm tiền tố chữ cái: "A. text", "B. text", v.v.
+- Mỗi giá trị chuỗi phải là một dòng (dùng \\n cho ngắt dòng)
+- isCorrect phải khớp với ký tự correctAnswer
+- **QUAN TRỌNG: Giải thích (explanation) PHẢI bằng TIẾNG VIỆT**
 
-CONTENT TO CONVERT:
-<<<
+Cấu trúc JSON bắt buộc cho MỖI câu:
+{
+  "question": "nội dung câu hỏi Vietnamese",
+  "type": "multiple_choice",
+  "level": "medium",
+  "options": [
+    { "text": "A. nội dung phương án A", "isCorrect": true },
+    { "text": "B. nội dung phương án B", "isCorrect": false },
+    { "text": "C. nội dung phương án C", "isCorrect": false },
+    { "text": "D. nội dung phương án D", "isCorrect": false }
+  ],
+  "correctAnswer": "A",
+  "explanation": "lời giải thích BẰNG TIẾNG VIỆT ở đây"
+}
+
+INPUT TEXT (bạn phải chuyển đổi TẤT CẢ ${rawQuestionCount} câu):
+===================
 ${aiGeneratedText}
->>>
+===================
 
-Output ONLY the JSON array, nothing else.`,
+OUTPUT: CHỈ trả về mảng JSON với ${rawQuestionCount} câu hỏi. Không có text thừa.`,
             },
           ],
-          temperature: 0.3,
-          max_tokens: 4000,
+          temperature: 0.2, // Low temperature for strict JSON format
+          max_tokens: Math.max(6000, rawQuestionCount * 350),
         },
         {
-          timeout: 60000,
+          timeout: 90000,
           headers: {
             'Authorization': `Bearer ${this.groqApiKey}`,
             'Content-Type': 'application/json',
@@ -400,17 +489,9 @@ Output ONLY the JSON array, nothing else.`,
       }
 
       const content = response.data.choices[0].message.content;
-      this.logger.log(`[AI] Step 2 raw response length: ${content.length}`);
+      this.logger.log(`[AI] Step 2: Raw response length: ${content.length} chars`);
 
-      // Extract JSON from response
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        this.logger.warn(`[AI] No JSON found in step 2 response: ${content.substring(0, 300)}`);
-        throw new Error('Invalid JSON format in step 2 response');
-      }
-
-      // Clean and fix JSON before parsing
-      let jsonStr = jsonMatch[0];
+      let jsonStr = content.trim();
       
       // Remove markdown code blocks if present
       jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
@@ -426,45 +507,45 @@ Output ONLY the JSON array, nothing else.`,
       jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
       jsonStr = jsonStr.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
       
-      this.logger.log(`[AI] Cleaned JSON length: ${jsonStr.length}`);
+      this.logger.log(`[AI] Step 2: Cleaned JSON length: ${jsonStr.length} chars`);
 
       let parsed;
       try {
+        // First attempt: Try direct JSON parse
         parsed = JSON.parse(jsonStr);
+        this.logger.log(`[AI] Step 2: Direct JSON parse succeeded`);
       } catch (parseError: any) {
-        this.logger.error(`[AI] First parse attempt failed: ${parseError.message}`);
+        this.logger.error(`[AI] Step 2: Direct parse failed: ${parseError.message}`);
         
-        // Try to parse objects individually
+        // Second attempt: Extract JSON array using character scanning
         try {
-          const objectPattern = /\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}/g;
-          const objects = jsonStr.match(objectPattern) || [];
-          
-          if (objects.length > 0) {
-            const cleanedObjects = objects.map((obj, idx) => {
-              try {
-                return JSON.parse(obj);
-              } catch (e) {
-                this.logger.warn(`[AI] Failed to parse object ${idx}`);
-                return null;
-              }
-            }).filter(Boolean);
-            
-            parsed = cleanedObjects;
-            this.logger.log(`[AI] Recovered ${cleanedObjects.length} / ${objects.length} objects`);
+          const jsonArray = this.extractJsonArray(jsonStr);
+          if (jsonArray) {
+            parsed = JSON.parse(jsonArray);
+            this.logger.log(`[AI] Step 2: Extracted JSON array parse succeeded`);
           } else {
-            throw new Error('Could not extract any JSON objects');
+            this.logger.error(`[AI] Step 2: Could not extract JSON array`);
+            throw new Error('Could not extract JSON array from response');
           }
-        } catch (secondParseError: any) {
-          this.logger.error(`[AI] Individual object parse failed: ${secondParseError.message}`);
-          throw secondParseError;
+        } catch (extractError: any) {
+          this.logger.error(`[AI] Step 2: Extraction failed: ${extractError.message}`);
+          // Last resort: try to extract individual question objects
+          this.logger.log(`[AI] Step 2: Attempting object-by-object extraction...`);
+          const objects = this.extractQuestionObjects(jsonStr);
+          if (objects.length > 0) {
+            parsed = objects;
+            this.logger.log(`[AI] Step 2: Recovered ${objects.length} objects`);
+          } else {
+            throw extractError;
+          }
         }
       }
 
       let questions = Array.isArray(parsed) ? parsed : parsed.questions || [];
       
-      this.logger.log(`[AI] Step 2: Parsed ${questions.length} questions (requested: ~${requestedCount})`);
+      this.logger.log(`[AI] Step 2: Parsed ${questions.length} questions (requested: ${requestedCount}, raw: ${rawQuestionCount})`);
       if (questions.length < requestedCount) {
-        this.logger.warn(`[AI] WARNING: Only got ${questions.length} questions but requested ~${requestedCount}`);
+        this.logger.warn(`[AI] Step 2: WARNING - Only got ${questions.length}/${requestedCount} questions`);
       }
 
       return questions;
@@ -477,24 +558,146 @@ Output ONLY the JSON array, nothing else.`,
     }
   }
 
-  private validateAiQuestions(questions: any[]): AIQuestion[] {
-    return questions
-      .filter((q) => {
+  /**
+   * Extract JSON array from text using character-by-character scanning
+   * More reliable than regex-based approaches
+   */
+  private extractJsonArray(text: string): string | null {
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+    let startIdx = -1;
 
-        return (
-          q.question &&
-          q.type &&
-          (q.options || q.correctAnswer)
-        );
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      // Handle escape sequences in strings
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escapeNext = true;
+        continue;
+      }
+
+      // Handle string boundaries
+      if (char === '"' && !escapeNext) {
+        inString = !inString;
+        continue;
+      }
+
+      // Only process structural characters outside strings
+      if (!inString) {
+        if (char === '[') {
+          if (depth === 0) {
+            startIdx = i;
+          }
+          depth++;
+        } else if (char === ']') {
+          depth--;
+          if (depth === 0 && startIdx !== -1) {
+            // Found complete JSON array
+            return text.substring(startIdx, i + 1);
+          }
+        }
+      }
+    }
+
+    // Return null if no complete array found
+    return null;
+  }
+
+  /**
+   * Extract individual question objects from JSON string
+   * Used as fallback when full array parsing fails
+   */
+  private extractQuestionObjects(text: string): any[] {
+    const objects: any[] = [];
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+    let currentStart = -1;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      // Handle escape sequences
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escapeNext = true;
+        continue;
+      }
+
+      // Handle strings
+      if (char === '"' && !escapeNext) {
+        inString = !inString;
+        continue;
+      }
+
+      // Only process structural characters outside strings
+      if (!inString) {
+        if (char === '{') {
+          if (depth === 0) {
+            currentStart = i;
+          }
+          depth++;
+        } else if (char === '}') {
+          depth--;
+          if (depth === 0 && currentStart !== -1) {
+            // Found a complete object
+            const objStr = text.substring(currentStart, i + 1);
+            try {
+              const parsed = JSON.parse(objStr);
+              objects.push(parsed);
+            } catch (e) {
+              this.logger.warn(`[AI] Failed to parse individual object at position ${currentStart}`);
+            }
+            currentStart = -1;
+          }
+        }
+      }
+    }
+
+    return objects;
+  }
+
+  private validateAiQuestions(questions: any[]): AIQuestion[] {
+    const validQuestions = questions
+      .filter((q, idx) => {
+        // Must have a question text
+        if (!q.question || typeof q.question !== 'string' || q.question.trim().length === 0) {
+          this.logger.warn(`[AI] Question ${idx + 1}: Missing or empty question text, skipping`);
+          return false;
+        }
+
+        // Must have either options (with at least one marked correct) OR correctAnswer
+        const hasOptions = Array.isArray(q.options) && q.options.length > 0;
+        const hasCorrectAnswer = q.correctAnswer && typeof q.correctAnswer === 'string';
+
+        if (!hasOptions && !hasCorrectAnswer) {
+          this.logger.warn(`[AI] Question ${idx + 1}: Missing both options and correctAnswer, skipping`);
+          return false;
+        }
+
+        return true;
       })
-      .map((q) => ({
-        question: q.question,
+      .map((q, idx) => ({
+        question: q.question.trim(),
         type: q.type || 'multiple_choice',
         options: q.options || [],
-        correctAnswer: q.correctAnswer,
+        correctAnswer: q.correctAnswer || '',
         explanation: q.explanation || 'Không có giải thích',
         level: this.normalizeLevel(q.level || 'medium'),
       }));
+
+    this.logger.log(`[AI] Validation: ${validQuestions.length} / ${questions.length} questions passed`);
+    return validQuestions;
   }
 
   /**
@@ -524,6 +727,88 @@ Output ONLY the JSON array, nothing else.`,
     return levelMap[normalized] || 'medium';
   }
 
+  /**
+   * Validate if generated questions match the requested topic
+   * Returns a relevance score (0-100)
+   */
+  private validateTopicRelevance(questions: AIQuestion[], originalPrompt: string): number {
+    if (questions.length === 0) return 0;
+
+    const topicKeywords = this.extractTopicKeywords(originalPrompt);
+    if (topicKeywords.length === 0) {
+      // If we can't extract keywords, assume relevance is OK
+      return 100;
+    }
+
+    let relevantCount = 0;
+    const lowerPrompt = originalPrompt.toLowerCase();
+
+    for (const question of questions) {
+      const questionText = `${question.question} ${question.explanation || ''}`.toLowerCase();
+      
+      // Check if question contains any topic keyword
+      const isRelevant = topicKeywords.some(keyword => {
+        return questionText.includes(keyword.toLowerCase());
+      });
+
+      if (isRelevant) {
+        relevantCount++;
+      } else {
+        this.logger.warn(`[AI] Question may not be relevant to topic "${originalPrompt}": ${question.question.substring(0, 50)}`);
+      }
+    }
+
+    const relevanceScore = Math.round((relevantCount / questions.length) * 100);
+    return relevanceScore;
+  }
+
+  /**
+   * Extract key topic words from original prompt for relevance checking
+   */
+  private extractTopicKeywords(prompt: string): string[] {
+    const keywords: string[] = [];
+
+    // Common Vietnamese subject keywords
+    const subjectKeywords = {
+      'toán': ['toán', 'số', 'phương trình', 'hàm số', 'đạo hàm', 'tích phân', 'bất phương'],
+      'lý': ['lý', 'lực', 'năng lượng', 'động', 'điện', 'ánh sáng'],
+      'hóa': ['hóa', 'hoá', 'chất', 'phản ứng', 'phân tử', 'nguyên tố'],
+      'anh': ['anh', 'english', 'verb', 'grammar', 'vocabulary'],
+      'sử': ['sử', 'lịch', 'chiến tranh', 'nước'],
+      'địa': ['địa', 'địaly', 'bản đồ', 'tự nhiên', 'nhân văn'],
+      'sinh': ['sinh', 'sinh học', 'gen', 'tiến hóa', 'tế bào'],
+    };
+
+    const lowerPrompt = prompt.toLowerCase();
+
+    // Find matching subject and add its keywords
+    for (const [subject, keys] of Object.entries(subjectKeywords)) {
+      if (lowerPrompt.includes(subject)) {
+        keywords.push(...keys);
+        break;
+      }
+    }
+
+    // Extract custom keywords from prompt (words after specific markers)
+    // Examples: "toán lớp 10 về phương trình" -> add "phương trình"
+    const customKeywords = prompt.match(/(?:về|liên quan|chuyên đề|chương)\s+([^,\.]+)/gi);
+    if (customKeywords) {
+      customKeywords.forEach(phrase => {
+        const keyword = phrase.replace(/(?:về|liên quan|chuyên đề|chương)\s+/i, '').trim();
+        if (keyword.length > 2) {
+          keywords.push(keyword);
+        }
+      });
+    }
+
+    // Add the entire prompt as a search term
+    const words = prompt.split(/\s+/).filter(w => w.length > 3);
+    keywords.push(...words);
+
+    // Remove duplicates
+    return Array.from(new Set(keywords));
+  }
+
   private getPointsByDifficulty(difficulty: 'easy' | 'medium' | 'hard'): number {
     switch (difficulty) {
       case 'easy':
@@ -537,4 +822,367 @@ Output ONLY the JSON array, nothing else.`,
     }
   }
 
+  /**
+   * Initialize chat conversation
+   * Creates draft quiz and returns conversation ID
+   */
+  async initializeChat(userId: string): Promise<any> {
+    const timestamp = new Date().toLocaleString('vi-VN');
+    const conversationId = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create draft quiz
+    const newQuiz = await this.quizModel.create({
+      title: `Đề thi (${timestamp})`,
+      description: `Đề thi được tạo bằng AI Chat`,
+      createdBy: userId,
+      questions: [],
+      isPublished: false,
+    });
+
+    this.logger.log(`[AI Chat] Initialized conversation ${conversationId} with quiz ${newQuiz._id}`);
+
+    return {
+      conversationId,
+      quizId: newQuiz._id.toString(),
+      quizTitle: newQuiz.title,
+    };
+  }
+
+  /**
+   * Chat message handler
+   * Analyzes user message and decides action:
+   * - Create new questions if not exists
+   * - Edit specific question (e.g., "Sửa câu 5")
+   * - Edit all questions (e.g., "Làm khó hơn")
+   * - Add more questions
+   */
+  async chatMessage(
+    conversationId: string,
+    userMessage: string,
+    currentQuestions: any[],
+    userId: string,
+  ): Promise<any> {
+    this.logger.log(`[AI Chat] Processing: "${userMessage.substring(0, 50)}..."`);
+
+    try {
+      // Determine action type
+      const actionType = this.detectActionType(userMessage, currentQuestions);
+      this.logger.log(`[AI Chat] Detected action: ${actionType}`);
+
+      let response: any;
+
+      switch (actionType) {
+        case 'create':
+          // Create new questions from prompt
+          response = await this.chatCreateQuestions(userMessage, userId);
+          break;
+
+        case 'edit-specific':
+          // Edit specific question(s)
+          const questionNum = this.extractQuestionNumber(userMessage);
+          response = await this.chatEditQuestion(
+            userMessage,
+            currentQuestions,
+            questionNum,
+            userId,
+          );
+          break;
+
+        case 'edit-all':
+          // Edit all questions
+          response = await this.chatEditAllQuestions(userMessage, currentQuestions, userId);
+          break;
+
+        case 'add':
+          // Add more questions
+          response = await this.chatAddQuestions(userMessage, currentQuestions, userId);
+          break;
+
+        default:
+          response = {
+            message:
+              'Tôi không hiểu yêu cầu của bạn. Hãy thử:\n• "Tạo 20 câu về Toán"\n• "Sửa câu 5 cho khó hơn"\n• "Làm khó hơn"',
+            questions: currentQuestions,
+          };
+      }
+
+      return response;
+    } catch (error: any) {
+      this.logger.error(`[AI Chat] Error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Detect action type from user message
+   */
+  private detectActionType(
+    message: string,
+    currentQuestions: any[],
+  ): 'create' | 'edit-specific' | 'edit-all' | 'add' | 'unknown' {
+    const lowerMsg = message.toLowerCase();
+
+    // Check if asking to create new
+    if (
+      lowerMsg.includes('tạo') ||
+      lowerMsg.includes('create') ||
+      lowerMsg.includes('sinh')
+    ) {
+      return 'create';
+    }
+
+    // Check if editing specific question
+    if (
+      lowerMsg.includes('câu') ||
+      (lowerMsg.includes('sửa') && lowerMsg.match(/\d+/))
+    ) {
+      return 'edit-specific';
+    }
+
+    // Check if adding more questions
+    if (
+      lowerMsg.includes('thêm') ||
+      lowerMsg.includes('add more') ||
+      (lowerMsg.includes('tạo') && lowerMsg.includes('nữa'))
+    ) {
+      return currentQuestions.length > 0 ? 'add' : 'create';
+    }
+
+    // Check if editing all
+    if (
+      (lowerMsg.includes('làm') || lowerMsg.includes('thay')) &&
+      (lowerMsg.includes('khó') ||
+        lowerMsg.includes('dễ') ||
+        lowerMsg.includes('lại') ||
+        lowerMsg.includes('toàn'))
+    ) {
+      return currentQuestions.length > 0 ? 'edit-all' : 'unknown';
+    }
+
+    return 'unknown';
+  }
+
+  /**
+   * Extract question number from message (e.g., "câu 5" -> 5)
+   */
+  private extractQuestionNumber(message: string): number {
+    const match = message.match(/câu\s*(\d+)/i);
+    return match ? parseInt(match[1], 10) - 1 : 0; // Convert to 0-indexed
+  }
+
+  /**
+   * Create questions from user prompt
+   */
+  private async chatCreateQuestions(prompt: string, userId: string): Promise<any> {
+    const numberOfQuestions = this.extractNumberOfQuestions(prompt);
+
+    const aiQuestions = await this.generateAiQuestions(prompt, 'vi');
+    this.logger.log(`[AI Chat] Generated ${aiQuestions.length} questions`);
+
+    const validatedQuestions = this.validateAiQuestions(aiQuestions);
+
+    return {
+      message: `✅ Tôi đã tạo ${validatedQuestions.length} câu hỏi cho bạn. Bạn có thể:\n• Xem xét chúng ở bên phải\n• Yêu cầu sửa ("Sửa câu 3 để dễ hơn")\n• Thêm câu hỏi ("Thêm 5 câu nữa")`,
+      questions: validatedQuestions.map((q) => ({
+        content: q.question,
+        type: q.type,
+        level: q.level,
+        options: q.options,
+        correctAnswer: q.correctAnswer,
+        explanation: q.explanation,
+        isActive: false,
+      })),
+    };
+  }
+
+  /**
+   * Edit specific question
+   */
+  private async chatEditQuestion(
+    modifyPrompt: string,
+    currentQuestions: any[],
+    questionIndex: number,
+    userId: string,
+  ): Promise<any> {
+    if (questionIndex >= currentQuestions.length) {
+      return {
+        message: `❌ Không tìm thấy câu ${questionIndex + 1}. Hiện tại có ${currentQuestions.length} câu.`,
+        questions: currentQuestions,
+      };
+    }
+
+    const questionToEdit = currentQuestions[questionIndex];
+
+    // Create prompt for AI to edit specific question
+    const editPrompt = `Hãy sửa câu hỏi sau theo yêu cầu: "${modifyPrompt}"
+
+Câu gốc:
+${questionToEdit.content}
+
+Các phương án gốc:
+${questionToEdit.options?.map((opt: any) => `${opt.text} ${opt.isCorrect ? ' (ĐÚNG)' : ''}`).join('\n')}
+
+Giải thích gốc:
+${questionToEdit.explanation}
+
+Vui lòng tạo câu hỏi mới thay thế, cải thiện theo yêu cầu. Giữ định dạng JSON:
+{
+  "question": "nội dung câu hỏi mới",
+  "options": [
+    { "text": "A. phương án A", "isCorrect": boolean },
+    { "text": "B. phương án B", "isCorrect": boolean },
+    { "text": "C. phương án C", "isCorrect": boolean },
+    { "text": "D. phương án D", "isCorrect": boolean }
+  ],
+  "correctAnswer": "A/B/C/D",
+  "explanation": "giải thích BẰNG TIẾNG VIỆT",
+  "level": "easy/medium/hard"
+}`;
+
+    try {
+      const editedQuestionText = await this.callGroqGenerateText(editPrompt, 'vi', 1);
+      const editedQuestion = await this.callGroqConvertToJson(editedQuestionText);
+
+      if (editedQuestion.length > 0) {
+        const modified = editedQuestion[0];
+        const updatedQuestions = [...currentQuestions];
+        updatedQuestions[questionIndex] = {
+          content: modified.question,
+          type: modified.type,
+          level: modified.level,
+          options: modified.options,
+          correctAnswer: modified.correctAnswer,
+          explanation: modified.explanation,
+          isActive: false,
+        };
+
+        return {
+          message: `✅ Đã sửa câu ${questionIndex + 1} theo yêu cầu của bạn.`,
+          questions: updatedQuestions,
+        };
+      }
+    } catch (error) {
+      this.logger.error(`[AI Chat] Error editing question: ${error}`);
+    }
+
+    return {
+      message: `❌ Có lỗi khi sửa câu hỏi. Vui lòng thử lại.`,
+      questions: currentQuestions,
+    };
+  }
+
+  /**
+   * Edit all questions
+   */
+  private async chatEditAllQuestions(
+    modifyPrompt: string,
+    currentQuestions: any[],
+    userId: string,
+  ): Promise<any> {
+    const totalQuestions = currentQuestions.length;
+
+    // Create prompt to edit all questions
+    const editAllPrompt = `Hãy sửa lại tất cả ${totalQuestions} câu hỏi sau theo yêu cầu: "${modifyPrompt}"
+
+Các câu hỏi hiện tại:
+${currentQuestions
+  .map(
+    (q, idx) => `
+Câu ${idx + 1}: ${q.content}
+Các phương án:
+${q.options?.map((opt: any) => `${opt.text}`).join('\n')}
+Đáp án đúng: ${q.correctAnswer}
+Giải thích: ${q.explanation}
+Độ khó: ${q.level}
+`,
+  )
+  .join('\n---\n')}
+
+Vui lòng tạo lại tất cả ${totalQuestions} câu hỏi, cải thiện chúng theo yêu cầu. Output JSON array.`;
+
+    try {
+      const editedText = await this.callGroqGenerateText(editAllPrompt, 'vi', totalQuestions);
+      const editedQuestions = await this.callGroqConvertToJson(editedText);
+
+      if (editedQuestions.length > 0) {
+        const updatedQuestions = editedQuestions.map((q) => ({
+          content: q.question,
+          type: q.type,
+          level: q.level,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation,
+          isActive: false,
+        }));
+
+        return {
+          message: `✅ Đã sửa lại tất cả ${updatedQuestions.length} câu theo yêu cầu "${modifyPrompt}".`,
+          questions: updatedQuestions,
+        };
+      }
+    } catch (error) {
+      this.logger.error(`[AI Chat] Error editing all questions: ${error}`);
+    }
+
+    return {
+      message: `❌ Có lỗi khi sửa lại các câu hỏi. Vui lòng thử lại.`,
+      questions: currentQuestions,
+    };
+  }
+
+  /**
+   * Add more questions
+   */
+  private async chatAddQuestions(
+    prompt: string,
+    currentQuestions: any[],
+    userId: string,
+  ): Promise<any> {
+    const additionalCount = this.extractNumberOfQuestions(prompt) || 5;
+
+    const addPrompt = `Hãy tạo thêm ${additionalCount} câu hỏi mới tương tự như ${currentQuestions.length} câu đã có:
+
+Các câu gốc:
+${currentQuestions
+  .map(
+    (q, idx) => `
+Câu ${idx + 1}: ${q.content}
+Độ khó: ${q.level}
+`,
+  )
+  .join('\n')}
+
+Tạo ${additionalCount} câu hỏi mới có cùng chủ đề và độ khó tương tự.`;
+
+    try {
+      const newText = await this.callGroqGenerateText(addPrompt, 'vi', additionalCount);
+      const newQuestions = await this.callGroqConvertToJson(newText);
+
+      if (newQuestions.length > 0) {
+        const addedQuestions = newQuestions.map((q) => ({
+          content: q.question,
+          type: q.type,
+          level: q.level,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation,
+          isActive: false,
+        }));
+
+        const combined = [...currentQuestions, ...addedQuestions];
+
+        return {
+          message: `✅ Đã thêm ${addedQuestions.length} câu hỏi mới. Tổng cộng ${combined.length} câu.`,
+          questions: combined,
+        };
+      }
+    } catch (error) {
+      this.logger.error(`[AI Chat] Error adding questions: ${error}`);
+    }
+
+    return {
+      message: `❌ Có lỗi khi thêm câu hỏi. Vui lòng thử lại.`,
+      questions: currentQuestions,
+    };
+  }
 }

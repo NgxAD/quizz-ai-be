@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../../common/guards/jwt.guard';
@@ -136,11 +137,15 @@ export class ExamsController {
       description?: string;
       duration?: number;
       passingPercentage?: number;
+      fileContent?: string;
+      fileName?: string;
+      examType?: 'exercise' | 'test'; // exercise: can retake & see answers, test: one time only
       questions: Array<{
         content: string;
         options: string[];
         correctAnswer: number;
         type?: string;
+        image?: string; // base64 image data
       }>;
     },
     @GetUser() user: any,
@@ -159,15 +164,102 @@ export class ExamsController {
         description: body.description,
         duration: body.duration,
         passingPercentage: body.passingPercentage,
+        fileContent: body.fileContent,
+        fileName: body.fileName,
       };
 
       return this.examsService.createExamFromQuestions(
         dto,
         body.questions,
         user.userId,
+        body.fileContent,
+        body.fileName,
+        body.examType,
       );
     } catch (error) {
       console.error('Error creating exam from questions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * POST /exams/upload-and-create-structure
+   * Tạo đề thi từ file upload với cấu trúc trống (A/B/C/D...)
+   * Giáo viên chỉ cần nhập số câu, số đáp án và sẽ chọn thủ công
+   */
+  @Post('upload-and-create-structure')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadAndCreateStructure(
+    @UploadedFile() file: any,
+    @Body() body: {
+      title: string;
+      description?: string;
+      duration?: number;
+      passingPercentage?: number;
+      type?: 'exercise' | 'test';
+      numberOfQuestions: number;
+      numberOfAnswersPerQuestion: number;
+    },
+    @GetUser() user: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+
+    if (!body.title || body.title.trim().length === 0) {
+      throw new BadRequestException('Title is required');
+    }
+
+    const allowedMimeTypes = [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'application/zip',
+      'text/plain',
+    ];
+
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        `Unsupported file type: ${file.mimetype}. Allowed: PDF, DOCX, XLSX, TXT, JPG, PNG, GIF, ZIP`,
+      );
+    }
+
+    // Parse file để lưu nội dung (nhưng không trích xuất câu hỏi)
+    let fileContent = '';
+    try {
+      fileContent = await this.fileParserService.parseFile(
+        file.buffer,
+        file.mimetype,
+      );
+    } catch (error) {
+      throw new BadRequestException(`Failed to parse file: ${error.message}`);
+    }
+
+    // Create exam with empty question structure
+    const dto: UploadAndCreateExamDto = {
+      title: body.title,
+      description: body.description,
+      duration: body.duration,
+      passingPercentage: body.passingPercentage,
+      type: body.type,
+    };
+
+    try {
+      return this.examsService.createExamFromFileStructure(
+        dto,
+        body.numberOfQuestions,
+        body.numberOfAnswersPerQuestion,
+        user.userId,
+        fileContent,
+        file.originalname,
+      );
+    } catch (error) {
+      console.error('Error creating exam structure:', error);
       throw error;
     }
   }
@@ -232,11 +324,13 @@ export class ExamsController {
       );
     }
 
-    // Create exam with extracted questions
+    // Create exam with extracted questions and file content
     return this.examsService.createExamFromQuestions(
       dto,
       questions,
       user.userId,
+      normalizedText,
+      file.originalname,
     );
   }
 
@@ -264,7 +358,7 @@ export class ExamsController {
   @Get(':id')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.STUDENT)
   async getExamById(@Param('id') id: string, @GetUser() user: any) {
-    return this.examsService.findById(id, user.userId);
+    return this.examsService.findById(id, user.userId, user.role);
   }
 
   /**
@@ -282,21 +376,55 @@ export class ExamsController {
       description?: string;
       duration?: number;
       passingPercentage?: number;
+      type?: 'exercise' | 'test';
       questions: Array<{
         _id?: string;
         content: string;
-        type: 'multiple-choice' | 'essay' | 'short-answer';
+        type: 'multiple-choice' | 'essay' | 'short-answer' | 'true-false';
         options?: Array<{ text: string; isCorrect: boolean }>;
         answer?: string;
+        explanation?: string;
       }>;
     },
     @GetUser() user: any,
   ) {
-    if (!body.questions || body.questions.length === 0) {
-      throw new BadRequestException('Questions are required');
-    }
+    try {
+      if (!body.questions || body.questions.length === 0) {
+        throw new BadRequestException('Questions are required');
+      }
 
-    return this.examsService.updateExamWithQuestions(id, body, user.userId);
+      // Validate questions
+      for (let i = 0; i < body.questions.length; i++) {
+        const q = body.questions[i];
+        if (!q.content || q.content.trim() === '') {
+          throw new BadRequestException(`Question ${i + 1}: Content is required`);
+        }
+
+        if (q.type === 'multiple-choice') {
+          if (!q.options || q.options.length === 0) {
+            throw new BadRequestException(`Question ${i + 1}: Options are required for multiple-choice questions`);
+          }
+
+          const validOptions = q.options.filter(opt => opt.text && opt.text.trim());
+          if (validOptions.length < 2) {
+            throw new BadRequestException(`Question ${i + 1}: At least 2 valid options required`);
+          }
+
+          const hasCorrectAnswer = q.options.some(opt => opt.isCorrect);
+          if (!hasCorrectAnswer) {
+            throw new BadRequestException(`Question ${i + 1}: Must have correct answer selected`);
+          }
+        }
+      }
+
+      return await this.examsService.updateExamWithQuestions(id, body, user.userId);
+    } catch (error: any) {
+      console.error('Error in updateExamWithQuestions:', error);
+      if (error instanceof BadRequestException || error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to update exam: ${error.message}`);
+    }
   }
 
   /**

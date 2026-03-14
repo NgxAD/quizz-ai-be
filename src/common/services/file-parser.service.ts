@@ -172,6 +172,12 @@ export class FileParserService {
     // Extract options (support A., A), A:, etc.)
     const options = this.extractOptions(optionsText);
     
+    console.log('Extracted question:', {
+      questionText: questionText.substring(0, 50),
+      optionsCount: options.length,
+      options: options.slice(0, 2), // Show first 2 options for debug
+    });
+    
     // Detect correct answer from common markers
     const correctAnswer = this.detectCorrectAnswer(optionLines);
 
@@ -196,13 +202,30 @@ export class FileParserService {
    */
   private extractOptions(text: string): string[] {
     const options: string[] = [];
-    const optionPattern = /[A-D][.):\s]+([^\n]*?)(?=[A-D][.):\s]+|$)/gi;
-    let match;
+    
+    // Split by lines and process each line
+    const lines = text.split('\n');
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      // Match lines like: A. option text, A) option text, A: option text
+      const match = trimmedLine.match(/^[A-D][.):\s]*(.+)$/);
+      if (match && match[1]) {
+        const optionText = match[1].trim();
+        if (optionText) {
+          options.push(optionText);
+        }
+      }
+    }
 
-    while ((match = optionPattern.exec(text)) !== null) {
-      const option = match[1].trim();
-      if (option) {
-        options.push(option);
+    // Fallback: if no options found with line-by-line approach, try regex
+    if (options.length === 0) {
+      const optionPattern = /[A-D][.):\s]+([^\n]+?)(?=\n[A-D][.):\s]|\n\n|$)/gi;
+      let regexMatch;
+      while ((regexMatch = optionPattern.exec(text)) !== null) {
+        const option = regexMatch[1].trim();
+        if (option) {
+          options.push(option);
+        }
       }
     }
 

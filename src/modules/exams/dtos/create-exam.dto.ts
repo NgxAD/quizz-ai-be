@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsDateString,
   IsArray,
+  IsEnum,
   Min,
   Max,
   ValidateNested,
@@ -36,6 +37,11 @@ class QuestionSelectionDto {
 export class CreateExamDto {
   @IsString()
   title: string; // Tên đề thi
+
+  @IsString()
+  @IsOptional()
+  @IsEnum(['exercise', 'test'])
+  type?: 'exercise' | 'test'; // Loại đề (bài tập / bài kiểm tra)
 
   @IsString()
   @IsOptional()

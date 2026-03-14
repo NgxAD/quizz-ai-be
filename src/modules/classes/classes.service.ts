@@ -70,8 +70,7 @@ export class ClassesService {
     const classDoc = await this.classModel
       .findById(id)
       .populate('createdBy', '-password')
-      .populate('members', '-password')
-      .populate('assignedExams');
+      .populate('members', '-password');
 
     if (!classDoc) {
       throw new NotFoundException('Lớp không tồn tại');
@@ -201,5 +200,19 @@ export class ClassesService {
       classDoc.assignedExams.push(examId);
       await classDoc.save();
     }
+  }
+
+  /**
+   * Remove exam from class
+   */
+  async removeExamFromClass(classId: string, examId: string): Promise<void> {
+    const classDoc = await this.classModel.findById(classId);
+
+    if (!classDoc) {
+      throw new NotFoundException('Lớp không tồn tại');
+    }
+
+    classDoc.assignedExams = classDoc.assignedExams.filter((id: string) => id !== examId);
+    await classDoc.save();
   }
 }

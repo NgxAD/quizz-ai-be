@@ -46,6 +46,9 @@ export class Question {
   @Prop()
   explanation: string; // explanation after answering
 
+  @Prop({ type: String })
+  image?: string; // base64 encoded image data
+
   @Prop({ default: 0 })
   order: number; // order in quiz
 

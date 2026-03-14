@@ -22,7 +22,12 @@ export class QuizService {
   }
 
   async findAll(teacherId?: string) {
-    const query = teacherId ? { createdBy: teacherId } : { isPublished: true };
+    // Only show published quizzes in the list
+    // If teacherId provided (teacher), filter by createdBy AND isPublished
+    // If no teacherId (student), show all published quizzes
+    const query = teacherId 
+      ? { createdBy: teacherId, isPublished: true } 
+      : { isPublished: true };
     return this.quizModel.find(query).populate('createdBy', '-password');
   }
 

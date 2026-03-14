@@ -35,11 +35,6 @@ export class SubmissionsService {
       throw new NotFoundException('Bài thi không tồn tại');
     }
 
-    // Chỉ xem được bài thi công bố
-    if (!exam.isPublished) {
-      throw new ForbiddenException('Bài thi này chưa được công bố');
-    }
-
     // Kiểm tra thời gian (nếu có)
     const now = new Date();
     if (exam.startDate && now < exam.startDate) {
@@ -107,6 +102,12 @@ export class SubmissionsService {
       throw new BadRequestException('Bài đã nộp rồi, không thể sửa đáp án');
     }
 
+    console.log('SaveAnswers received:', {
+      submissionId,
+      answersCount: saveAnswersDto.answers.length,
+      answers: saveAnswersDto.answers.slice(0, 2), // Show first 2 for debug
+    });
+
     // Lưu đáp án
     submission.answers = saveAnswersDto.answers.map((answer) => ({
       questionId: answer.questionId as any,
@@ -165,9 +166,33 @@ export class SubmissionsService {
       exam.passingPercentage,
     );
 
+    // Update submission answers with scoring info
+    try {
+      const questionsMap = new Map(
+        exam.questions
+          .filter((q: any) => q && q._id)
+          .map((q: any) => [q._id?.toString(), q])
+      );
+      
+      submission.answers = submission.answers.map((answer) => {
+        const question = questionsMap.get(answer.questionId.toString());
+        const isCorrect = question ? this.isAnswerCorrect(question, answer.answer) : false;
+        
+        return {
+          ...answer,
+          isCorrect,
+          points: isCorrect ? (question?.points || 1) : 0,
+        };
+      }) as any;
+    } catch (updateError) {
+      console.error('Error updating submission answers with scoring:', updateError);
+      // Continue without updating individual answer scoring
+    }
+
     // Cập nhật submission
     submission.isSubmitted = true;
     submission.submittedAt = new Date();
+    submission.score = scoringResult.score;
     if (submitAnswersDto.timeElapsed) {
       submission.timeElapsed = submitAnswersDto.timeElapsed;
     }
@@ -279,13 +304,29 @@ export class SubmissionsService {
    * Kiểm tra đáp án đúng
    */
   private isAnswerCorrect(question: any, studentAnswer: string | string[]): boolean {
+    console.log(`\n=== Checking answer for question: ${question._id} ===`);
+    console.log('Question options:', question.options);
+    console.log('Student answer:', studentAnswer, `(type: ${typeof studentAnswer})`);
+
     // Cho multiple choice hoặc true/false
     if (question.options && question.options.length > 0) {
       // Find the correct option
-      const correctOption = question.options.find((opt: any) => opt.isCorrect);
+      let correctOption = question.options.find((opt: any) => {
+        console.log('Checking option:', opt, `isCorrect:`, opt.isCorrect);
+        // Handle both object {text, isCorrect} and string format
+        if (typeof opt === 'object' && opt !== null) {
+          return opt.isCorrect;
+        }
+        return false;
+      });
+
+      console.log('Correct option found:', correctOption);
+
       if (correctOption) {
         // Get the correct answer value (text)
-        const correctValue = correctOption.text;
+        const correctValue = typeof correctOption === 'object' 
+          ? correctOption.text 
+          : correctOption;
         
         // Normalize student answer
         const studentAnswerValue = Array.isArray(studentAnswer) 
@@ -296,25 +337,31 @@ export class SubmissionsService {
         const normalizedCorrect = (correctValue || '').trim().toLowerCase();
         const normalizedStudent = (studentAnswerValue || '').trim().toLowerCase();
         
-        console.log(`Checking answer:`, {
-          questionId: question._id,
-          studentAnswer: studentAnswerValue,
-          correctAnswer: correctValue,
+        console.log(`Normalized comparison:`, {
           studentNormalized: normalizedStudent,
           correctNormalized: normalizedCorrect,
-          isMatch: normalizedStudent === normalizedCorrect,
+          match: normalizedStudent === normalizedCorrect,
         });
         
         return normalizedStudent === normalizedCorrect;
+      } else {
+        console.log('WARNING: No correct option found in options array!');
       }
     }
 
     // Cho short answer - exact match
     if (question.correctAnswer) {
       const answerText = Array.isArray(studentAnswer) ? studentAnswer[0] : studentAnswer;
-      return answerText.toLowerCase().trim() === question.correctAnswer.toLowerCase().trim();
+      const match = answerText.toLowerCase().trim() === question.correctAnswer.toLowerCase().trim();
+      console.log(`Short answer comparison:`, {
+        student: answerText.toLowerCase().trim(),
+        correct: question.correctAnswer.toLowerCase().trim(),
+        match,
+      });
+      return match;
     }
 
+    console.log('No answer checking logic matched!');
     return false;
   }
 
@@ -323,20 +370,43 @@ export class SubmissionsService {
    */
   async getSubmission(submissionId: string, userId: string) {
     const submission = await this.submissionModel
-      .findById(submissionId)
-      .populate('quizId')
-      .populate('userId', '-password');
+      .findById(submissionId);
 
     if (!submission) {
       throw new NotFoundException('Submission không tồn tại');
     }
 
-    // Chỉ xem được submission của mình (ngoại trừ admin)
+    // Chỉ xem được submission của mình
+    // Both are strings (ObjectId strings), so direct comparison works
     if (submission.userId.toString() !== userId) {
       throw new ForbiddenException('Không có quyền xem submission này');
     }
 
-    return submission;
+    // Now populate for return data
+    const populatedSubmission = await this.submissionModel
+      .findById(submissionId)
+      .populate('quizId')
+      .populate('userId', '-password');
+
+    if (!populatedSubmission) {
+      throw new NotFoundException('Submission không tồn tại');
+    }
+
+    // Also fetch the result if it exists
+    const result = await this.resultModel.findOne({ submissionId });
+
+    // Return with result info if available
+    return {
+      ...populatedSubmission.toObject(),
+      result: result ? {
+        score: result.score,
+        correctAnswers: result.correctAnswers,
+        wrongAnswers: result.wrongAnswers,
+        skipped: result.skipped,
+        totalPoints: result.totalPoints,
+        isPassed: result.isPassed,
+      } : null,
+    };
   }
 
   /**

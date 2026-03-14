@@ -46,6 +46,23 @@ export class Quiz {
 
   @Prop({ default: 0 })
   totalAttempts: number;
+
+  @Prop({ type: String, default: null })
+  fileContent?: string; // Nội dung file đề (để hiển thị cho học sinh)
+
+  @Prop({ type: String, default: null })
+  fileName?: string; // Tên file gốc
+
+  @Prop({ enum: ['exercise', 'test'], default: 'exercise' })
+  examType: 'exercise' | 'test'; // exercise: can retake & see answers, test: one time only
 }
 
 export const QuizSchema = SchemaFactory.createForClass(Quiz);
+
+// Add virtual field to expose examType as type for API compatibility
+QuizSchema.virtual('type').get(function() {
+  return this.examType;
+});
+
+// Ensure virtuals are included in toJSON
+QuizSchema.set('toJSON', { virtuals: true });
