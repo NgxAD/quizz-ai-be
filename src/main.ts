@@ -1,9 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import * as express from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Increase body size limit to 10MB for image uploads
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.use(express.json({ limit: '10mb' }));
+  expressApp.use(express.urlencoded({ limit: '10mb', extended: true }));
 
   // Enable CORS
   app.enableCors({

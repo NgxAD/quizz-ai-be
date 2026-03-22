@@ -8,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { User, UserDocument } from '../../schemas/user.schema';
+import { UserRole } from '../../common/enums/role.enum';
 import { RegisterDto } from './dtos/register.dto';
 import { LoginDto } from './dtos/login.dto';
 
@@ -28,20 +29,20 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Ensure role is lowercase
-    const userRole = (role || 'student').toLowerCase();
+    // Default role is student (as array)
+    const userRoles = [UserRole.STUDENT];
 
     const user = await this.userModel.create({
       email,
       password: hashedPassword,
       fullName,
-      role: userRole,
+      roles: userRoles,
     });
 
     const payload = {
       sub: user._id,
       email: user.email,
-      role: user.role,
+      roles: user.roles,
     };
 
     const access_token = this.jwtService.sign(payload);
@@ -76,7 +77,7 @@ export class AuthService {
     const payload = {
       sub: user._id,
       email: user.email,
-      role: user.role,
+      roles: user.roles,
     };
 
     const access_token = this.jwtService.sign(payload);
@@ -108,6 +109,7 @@ export class AuthService {
         googleEmail: email,
         email,
         fullName,
+        roles: [UserRole.STUDENT],
       });
     }
 
@@ -120,7 +122,7 @@ export class AuthService {
     const payload = {
       sub: user._id,
       email: user.email,
-      role: user.role,
+      roles: user.roles,
     };
 
     const access_token = this.jwtService.sign(payload);
@@ -145,36 +147,44 @@ export class AuthService {
       throw new BadRequestException('Role không hợp lệ');
     }
 
-    const userRole = role.toLowerCase() as any;
+    const newRole = role.toLowerCase() as UserRole;
     
-    // Prepare update data
-    const updateData: any = { role: userRole };
-    
-    // Only update isTeacherApproved if upgrading to teacher
-    // Otherwise keep the current value to allow switching between roles
-    if (userRole === 'teacher') {
+    // Get current user
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    // Add role if not already present
+    if (!user.roles.includes(newRole)) {
+      user.roles.push(newRole);
+    }
+
+    // Update isTeacherApproved if adding teacher role
+    const updateData: any = { roles: user.roles };
+    if (newRole === UserRole.TEACHER && !user.roles.includes(UserRole.TEACHER)) {
       updateData.isTeacherApproved = true;
     }
     
-    const user = await this.userModel.findByIdAndUpdate(
+    const updatedUser = await this.userModel.findByIdAndUpdate(
       userId,
       updateData,
       { new: true }
     );
 
-    if (!user) {
+    if (!updatedUser) {
       throw new UnauthorizedException('Người dùng không tồn tại');
     }
 
     const payload = {
-      sub: user._id,
-      email: user.email,
-      role: user.role,
+      sub: updatedUser._id,
+      email: updatedUser.email,
+      roles: updatedUser.roles,
     };
 
     const access_token = this.jwtService.sign(payload);
 
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    const { password: _, ...userWithoutPassword } = updatedUser.toObject();
 
     return {
       message: 'Cập nhật role thành công',
@@ -184,28 +194,41 @@ export class AuthService {
   }
 
   async downgradeTeacher(userId: string) {
-    const user = await this.userModel.findByIdAndUpdate(
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    // Remove teacher role from roles array
+    user.roles = user.roles.filter(r => r !== UserRole.TEACHER);
+
+    // Ensure user still has at least student role
+    if (user.roles.length === 0) {
+      user.roles = [UserRole.STUDENT];
+    }
+
+    const updatedUser = await this.userModel.findByIdAndUpdate(
       userId,
       { 
-        role: 'student',
+        roles: user.roles,
         isTeacherApproved: false
       },
       { new: true }
     );
 
-    if (!user) {
+    if (!updatedUser) {
       throw new UnauthorizedException('Người dùng không tồn tại');
     }
 
     const payload = {
-      sub: user._id,
-      email: user.email,
-      role: user.role,
+      sub: updatedUser._id,
+      email: updatedUser.email,
+      roles: updatedUser.roles,
     };
 
     const access_token = this.jwtService.sign(payload);
 
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    const { password: _, ...userWithoutPassword } = updatedUser.toObject();
 
     return {
       message: 'Bỏ quyền giáo viên thành công',
@@ -218,7 +241,6 @@ export class AuthService {
     const updateData: any = {};
 
     if (updateProfileDto.fullName) updateData.fullName = updateProfileDto.fullName;
-    if (updateProfileDto.phoneNumber) updateData.phoneNumber = updateProfileDto.phoneNumber;
     if (updateProfileDto.avatar) updateData.avatar = updateProfileDto.avatar;
     if (updateProfileDto.dateOfBirth) updateData.dateOfBirth = updateProfileDto.dateOfBirth;
     if (updateProfileDto.gender) updateData.gender = updateProfileDto.gender;
@@ -237,6 +259,21 @@ export class AuthService {
 
     return {
       message: 'Cập nhật hồ sơ thành công',
+      user: userWithoutPassword,
+    };
+  }
+
+  async getUserById(userId: string) {
+    const user = await this.userModel.findById(userId);
+    
+    if (!user) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    const { password: _, ...userWithoutPassword } = user.toObject();
+    
+    return {
+      message: 'Lấy thông tin người dùng thành công',
       user: userWithoutPassword,
     };
   }

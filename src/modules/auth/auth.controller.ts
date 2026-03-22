@@ -40,7 +40,7 @@ export class AuthController {
         _id: result.user._id,
         email: result.user.email,
         fullName: result.user.fullName,
-        role: result.user.role,
+        roles: result.user.roles,
         avatar: result.user.avatar,
       }));
       
@@ -67,6 +67,12 @@ export class AuthController {
   @UseGuards(AuthGuard('jwt'))
   async downgradeTeacher(@Req() req) {
     return this.authService.downgradeTeacher(req.user.sub);
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  async getCurrentUser(@Req() req) {
+    return this.authService.getUserById(req.user.sub);
   }
 
   @Patch('profile')

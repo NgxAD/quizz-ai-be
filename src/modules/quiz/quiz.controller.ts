@@ -31,7 +31,7 @@ export class QuizController {
   @Get()
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.STUDENT)
   async getAllQuizzes(@GetUser() user: any) {
-    if (user.role === UserRole.TEACHER) {
+    if (user.roles?.includes(UserRole.TEACHER)) {
       return this.quizService.findAll(user.userId);
     }
     return this.quizService.findAll();

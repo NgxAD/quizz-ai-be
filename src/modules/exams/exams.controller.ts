@@ -345,7 +345,7 @@ export class ExamsController {
     @Query('subjectId') subjectId?: string,
     @Query('status') status?: 'draft' | 'published',
   ) {
-    if (user.role === UserRole.TEACHER) {
+    if (user.roles?.includes(UserRole.TEACHER)) {
       return this.examsService.findAll(user.userId, subjectId, status);
     }
     return this.examsService.findAllPublished(subjectId);
@@ -358,7 +358,9 @@ export class ExamsController {
   @Get(':id')
   @Roles(UserRole.TEACHER, UserRole.ADMIN, UserRole.STUDENT)
   async getExamById(@Param('id') id: string, @GetUser() user: any) {
-    return this.examsService.findById(id, user.userId, user.role);
+    // Pass the first role as primary role (for backward compatibility with service)
+    const primaryRole = user.roles?.[0] || UserRole.STUDENT;
+    return this.examsService.findById(id, user.userId, primaryRole);
   }
 
   /**

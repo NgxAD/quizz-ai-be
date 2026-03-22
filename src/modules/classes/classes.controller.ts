@@ -41,10 +41,10 @@ export class ClassesController {
    */
   @Get()
   async getClasses(@GetUser() user: any) {
-    if (user.role === UserRole.TEACHER) {
+    if (user.roles?.includes(UserRole.TEACHER)) {
       return this.classesService.getTeacherClasses(user.userId);
     }
-    if (user.role === UserRole.STUDENT) {
+    if (user.roles?.includes(UserRole.STUDENT)) {
       return this.classesService.getStudentClasses(user.userId);
     }
     // Admin can see all classes

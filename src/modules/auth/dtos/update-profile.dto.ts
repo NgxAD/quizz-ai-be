@@ -7,10 +7,6 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
-  phoneNumber?: string;
-
-  @IsOptional()
-  @IsString()
   dateOfBirth?: string;
 
   @IsOptional()
