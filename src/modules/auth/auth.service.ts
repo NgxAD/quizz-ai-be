@@ -11,13 +11,71 @@ import { User, UserDocument } from '../../schemas/user.schema';
 import { UserRole } from '../../common/enums/role.enum';
 import { RegisterDto } from './dtos/register.dto';
 import { LoginDto } from './dtos/login.dto';
+import { v4 as uuidv4 } from 'uuid';
+
+interface AuthSession {
+  data: {
+    message: string;
+    user: any;
+    access_token: string;
+  };
+  createdAt: number;
+}
 
 @Injectable()
 export class AuthService {
+  private authSessions = new Map<string, AuthSession>();
+  private readonly SESSION_EXPIRES_IN = 15 * 60 * 1000; // 15 minutes
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
-  ) {}
+  ) {
+    // Clean up expired sessions every 30 seconds
+    setInterval(() => {
+      this.cleanExpiredSessions();
+    }, 30000);
+  }
+
+  private cleanExpiredSessions() {
+    const now = Date.now();
+    for (const [sessionId, session] of this.authSessions.entries()) {
+      if (now - session.createdAt > this.SESSION_EXPIRES_IN) {
+        this.authSessions.delete(sessionId);
+      }
+    }
+  }
+
+  async createAuthSession(authData: any): Promise<string> {
+    const sessionId = uuidv4();
+    this.authSessions.set(sessionId, {
+      data: authData,
+      createdAt: Date.now(),
+    });
+    console.log('Created auth session:', sessionId);
+    return sessionId;
+  }
+
+  async getAuthSession(sessionId: string): Promise<any> {
+    console.log('Getting auth session:', sessionId);
+    console.log('Available sessions:', Array.from(this.authSessions.keys()));
+    
+    const session = this.authSessions.get(sessionId);
+    if (!session) {
+      throw new UnauthorizedException('Session không hợp lệ hoặc đã hết hạn');
+    }
+
+    // Check if session is expired
+    if (Date.now() - session.createdAt > this.SESSION_EXPIRES_IN) {
+      this.authSessions.delete(sessionId);
+      throw new UnauthorizedException('Session đã hết hạn');
+    }
+
+    // Delete session after retrieval (one-time use)
+    this.authSessions.delete(sessionId);
+    console.log('Session retrieved and deleted:', sessionId);
+    return session.data;
+  }
 
   async register(registerDto: RegisterDto) {
     const { email, password, fullName, role } = registerDto;
@@ -74,6 +132,11 @@ export class AuthService {
 
     await this.userModel.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
 
+    console.log('Login - user from DB:', {
+      email: user.email,
+      roles: user.roles,
+    });
+
     const payload = {
       sub: user._id,
       email: user.email,
@@ -82,7 +145,12 @@ export class AuthService {
 
     const access_token = this.jwtService.sign(payload);
 
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    const userObj = user.toObject();
+    console.log('Login - user.toObject():', {
+      roles: userObj.roles,
+    });
+
+    const { password: _, ...userWithoutPassword } = userObj;
     return {
       message: 'Đăng nhập thành công',
       user: userWithoutPassword,
@@ -127,7 +195,11 @@ export class AuthService {
 
     const access_token = this.jwtService.sign(payload);
 
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    const userObj = user.toObject();
+    console.log('Google login - user object:', userObj);
+    console.log('Google login - roles:', userObj.roles);
+
+    const { password: _, ...userWithoutPassword } = userObj;
     return {
       message: 'Đăng nhập bằng Google thành công',
       user: userWithoutPassword,

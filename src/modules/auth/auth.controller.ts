@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, Get, UseGuards, Req, Query, Res, Patch } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, Get, UseGuards, Req, Query, Res, Patch, BadRequestException, Param } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dtos/register.dto';
@@ -33,18 +33,12 @@ export class AuthController {
     try {
       const result = await this.authService.googleLogin(req.user);
       
-      // Redirect to frontend with token and user data
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
-      const token = result.access_token;
-      const userData = encodeURIComponent(JSON.stringify({
-        _id: result.user._id,
-        email: result.user.email,
-        fullName: result.user.fullName,
-        roles: result.user.roles,
-        avatar: result.user.avatar,
-      }));
+      // Generate a temporary session ID to store auth data securely
+      const sessionId = await this.authService.createAuthSession(result);
       
-      res.redirect(`${frontendUrl}/login?token=${token}&user=${userData}`);
+      // Redirect to frontend with only session ID (safe to pass in URL)
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+      res.redirect(`${frontendUrl}/auth/callback?sessionId=${sessionId}`);
     } catch (error) {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
       res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(error.message)}`);
@@ -55,6 +49,15 @@ export class AuthController {
   @HttpCode(200)
   async googleLoginWithCode(@Body() body: { code: string }) {
     return this.authService.googleLoginWithCode(body.code);
+  }
+
+  @Get('session/:sessionId')
+  @HttpCode(200)
+  async getAuthSession(@Param('sessionId') sessionId: string) {
+    if (!sessionId) {
+      throw new BadRequestException('Session ID is required');
+    }
+    return this.authService.getAuthSession(sessionId);
   }
 
   @Post('update-role')
