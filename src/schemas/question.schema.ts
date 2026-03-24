@@ -12,7 +12,7 @@ export class Question {
   @Prop({ enum: QuestionType, default: QuestionType.MULTIPLE_CHOICE })
   type: QuestionType;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Quiz', required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Quiz' })
   quizId: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Subject' })

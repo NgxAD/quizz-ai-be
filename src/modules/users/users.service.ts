@@ -113,9 +113,9 @@ export class UsersService {
 
   async getStats() {
     const totalUsers = await this.userModel.countDocuments();
-    const adminCount = await this.userModel.countDocuments({ role: UserRole.ADMIN });
-    const teacherCount = await this.userModel.countDocuments({ role: UserRole.TEACHER });
-    const studentCount = await this.userModel.countDocuments({ role: UserRole.STUDENT });
+    const adminCount = await this.userModel.countDocuments({ roles: UserRole.ADMIN });
+    const teacherCount = await this.userModel.countDocuments({ roles: UserRole.TEACHER });
+    const studentCount = await this.userModel.countDocuments({ roles: UserRole.STUDENT });
     const activeUsers = await this.userModel.countDocuments({ isActive: true });
 
     return {

@@ -11,6 +11,9 @@ export class Submission {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
   userId: string;
 
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Result' })
+  resultId?: string; // Reference to Result document
+
   @Prop({
     type: [
       {

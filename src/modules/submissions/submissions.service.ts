@@ -212,6 +212,10 @@ export class SubmissionsService {
       completedAt: new Date(),
     });
 
+    // Link result to submission
+    submission.resultId = result._id.toString();
+    await submission.save();
+
     return {
       message: 'Nộp bài thành công',
       result: {
@@ -529,7 +533,8 @@ export class SubmissionsService {
 
     return this.submissionModel
       .find(query)
-      .populate('quizId', 'title totalQuestions')
+      .populate('quizId', 'title totalQuestions passingPercentage')
+      .populate('resultId')
       .sort({ startedAt: -1 });
   }
 

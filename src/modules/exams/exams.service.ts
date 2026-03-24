@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { Quiz, QuizDocument } from '../../schemas/quiz.schema';
 import { Question, QuestionDocument } from '../../schemas/question.schema';
 import { Result, ResultDocument } from '../../schemas/result.schema';
+import { Class, ClassDocument } from '../../schemas/class.schema';
 import { QuestionType } from '../../common/enums/question-type.enum';
 import { CreateExamDto } from './dtos/create-exam.dto';
 import { UpdateExamDto } from './dtos/update-exam.dto';
@@ -17,6 +18,7 @@ export class ExamsService {
     @InjectModel(Quiz.name) private quizModel: Model<QuizDocument>,
     @InjectModel(Question.name) private questionModel: Model<QuestionDocument>,
     @InjectModel(Result.name) private resultModel: Model<ResultDocument>,
+    @InjectModel(Class.name) private classModel: Model<ClassDocument>,
     private aiService: AiService,
     private fileParserService: FileParserService,
   ) {}
@@ -613,12 +615,59 @@ export class ExamsService {
       throw error;
     }
 
+    // Delete questions that are no longer in the exam
+    const oldQuestionIds = quiz.questions.map(q => q.toString());
+    console.log('[updateExamWithQuestions] Old questions:', oldQuestionIds);
+    console.log('[updateExamWithQuestions] New questions:', questionIds);
+    
+    const questionsToDelete = oldQuestionIds.filter(id => !questionIds.includes(id));
+    console.log('[updateExamWithQuestions] Questions to delete:', questionsToDelete);
+    
+    if (questionsToDelete.length > 0) {
+      console.log(`[updateExamWithQuestions] Deleting ${questionsToDelete.length} unreferenced questions`);
+      const deleteResult = await this.questionModel.deleteMany({
+        _id: { $in: questionsToDelete }
+      });
+      console.log('[updateExamWithQuestions] Delete result - deletedCount:', deleteResult.deletedCount);
+    }
+
     // Update quiz with questions
     quiz.questions = questionIds;
     quiz.totalQuestions = questionIds.length;
     await quiz.save();
+    console.log('[updateExamWithQuestions] Quiz saved with questions:', quiz.questions);
 
-    return this.quizModel
+    // Verify questions were deleted by checking database
+    const remainingOldQuestions = await this.questionModel.find({
+      _id: { $in: questionsToDelete }
+    });
+    if (remainingOldQuestions.length > 0) {
+      console.warn(`[updateExamWithQuestions] WARNING: ${remainingOldQuestions.length} questions still exist after deletion!`);
+    }
+
+    // Force fresh fetch from database using lean for uncached data
+    const updatedQuiz = await this.quizModel
+      .findById(id)
+      .select({ questions: 1 })
+      .lean();
+    
+    if (!updatedQuiz) {
+      throw new NotFoundException('Đề thi không tồn tại');
+    }
+    
+    // Now fetch the actual questions
+    const finalQuestions = await this.questionModel
+      .find({ _id: { $in: updatedQuiz.questions } })
+      .lean();
+    
+    console.log('[updateExamWithQuestions] Final questions count:', finalQuestions.length);
+    console.log('[updateExamWithQuestions] Final questions:', finalQuestions.map(q => ({
+      _id: q._id,
+      content: q.content?.substring(0, 30)
+    })));
+    
+    // Return full exam with all data
+    return await this.quizModel
       .findById(id)
       .populate('createdBy', '-password')
       .populate('questions');
@@ -635,6 +684,18 @@ export class ExamsService {
 
     if (quiz.createdBy.toString() !== userId) {
       throw new BadRequestException('Bạn không có quyền xóa đề thi này');
+    }
+
+    // Check if exam is assigned to any classes
+    const assignedClasses = await this.classModel.find({ 
+      assignedExams: id 
+    });
+
+    if (assignedClasses && assignedClasses.length > 0) {
+      const classNames = assignedClasses.map(cls => cls.name).join(', ');
+      throw new BadRequestException(
+        `Không thể xóa đề thi này vì nó đang được giao cho lớp: ${classNames}. Vui lòng xóa khỏi những lớp này trước khi xóa đề thi.`
+      );
     }
 
     await this.quizModel.deleteOne({ _id: id });

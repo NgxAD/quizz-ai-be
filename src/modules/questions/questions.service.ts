@@ -14,9 +14,12 @@ export class QuestionsService {
   ) {}
 
   async createQuestion(createQuestionDto: CreateQuestionDto, userId: string) {
-    const quiz = await this.quizModel.findById(createQuestionDto.quizId);
-    if (!quiz) {
-      throw new NotFoundException('Bài thi không tồn tại');
+    // Only validate and update quiz if quizId is provided
+    if (createQuestionDto.quizId) {
+      const quiz = await this.quizModel.findById(createQuestionDto.quizId);
+      if (!quiz) {
+        throw new NotFoundException('Bài thi không tồn tại');
+      }
     }
 
     const question = await this.questionModel.create({
@@ -24,11 +27,14 @@ export class QuestionsService {
       createdBy: userId,
     });
 
-    // Add question to quiz
-    if (!quiz.questions.includes(question._id.toString())) {
-      quiz.questions.push(question._id.toString());
-      quiz.totalQuestions = quiz.questions.length;
-      await quiz.save();
+    // Add question to quiz only if quizId is provided
+    if (createQuestionDto.quizId) {
+      const quiz = await this.quizModel.findById(createQuestionDto.quizId);
+      if (quiz && !quiz.questions.includes(question._id.toString())) {
+        quiz.questions.push(question._id.toString());
+        quiz.totalQuestions = quiz.questions.length;
+        await quiz.save();
+      }
     }
 
     return question.populate('createdBy', '-password');

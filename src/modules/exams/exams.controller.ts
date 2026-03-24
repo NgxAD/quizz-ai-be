@@ -391,6 +391,17 @@ export class ExamsController {
     @GetUser() user: any,
   ) {
     try {
+      console.log(`[updateExamWithQuestions] Exam ID: ${id}`);
+      console.log(`[updateExamWithQuestions] Received ${body.questions?.length || 0} questions`);
+      console.log('[updateExamWithQuestions] Full payload:', JSON.stringify({
+        title: body.title,
+        description: body.description,
+        duration: body.duration,
+        passingPercentage: body.passingPercentage,
+        type: body.type,
+        questionCount: body.questions?.length || 0,
+      }, null, 2));
+      
       if (!body.questions || body.questions.length === 0) {
         throw new BadRequestException('Questions are required');
       }
@@ -398,6 +409,14 @@ export class ExamsController {
       // Validate questions
       for (let i = 0; i < body.questions.length; i++) {
         const q = body.questions[i];
+        console.log(`[updateExamWithQuestions] Validating question ${i + 1}:`, {
+          content: q.content?.substring(0, 40),
+          type: q.type,
+          optionsCount: q.options?.length || 0,
+          validOptionsCount: q.options?.filter(opt => opt.text?.trim())?.length || 0,
+          hasCorrectAnswer: q.options?.some(opt => opt.isCorrect),
+        });
+
         if (!q.content || q.content.trim() === '') {
           throw new BadRequestException(`Question ${i + 1}: Content is required`);
         }
@@ -409,7 +428,7 @@ export class ExamsController {
 
           const validOptions = q.options.filter(opt => opt.text && opt.text.trim());
           if (validOptions.length < 2) {
-            throw new BadRequestException(`Question ${i + 1}: At least 2 valid options required`);
+            throw new BadRequestException(`Question ${i + 1}: At least 2 valid options required (got ${validOptions.length} valid options)`);
           }
 
           const hasCorrectAnswer = q.options.some(opt => opt.isCorrect);
@@ -421,7 +440,7 @@ export class ExamsController {
 
       return await this.examsService.updateExamWithQuestions(id, body, user.userId);
     } catch (error: any) {
-      console.error('Error in updateExamWithQuestions:', error);
+      console.error('[updateExamWithQuestions] Error:', error.message);
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
         throw error;
       }

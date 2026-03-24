@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsEnum,
   IsArray,
+  IsBoolean,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -13,7 +14,7 @@ class OptionDto {
   @IsString()
   text: string;
 
-  @IsString()
+  @IsBoolean()
   isCorrect: boolean;
 }
 
@@ -26,7 +27,8 @@ export class CreateQuestionDto {
   type?: QuestionType;
 
   @IsString()
-  quizId: string;
+  @IsOptional()
+  quizId?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

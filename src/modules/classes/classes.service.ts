@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { Class, ClassDocument } from '../../schemas/class.schema';
 import { CreateClassDto } from './dtos/create-class.dto';
@@ -206,13 +206,18 @@ export class ClassesService {
    * Remove exam from class
    */
   async removeExamFromClass(classId: string, examId: string): Promise<void> {
-    const classDoc = await this.classModel.findById(classId);
-
-    if (!classDoc) {
+    console.log(`[removeExamFromClass] Removing exam ${examId} from class ${classId}`);
+    
+    const result = await this.classModel.findByIdAndUpdate(
+      classId,
+      { $pull: { assignedExams: new Types.ObjectId(examId) } },
+      { new: true }
+    );
+    
+    if (!result) {
       throw new NotFoundException('Lớp không tồn tại');
     }
-
-    classDoc.assignedExams = classDoc.assignedExams.filter((id: string) => id !== examId);
-    await classDoc.save();
+    
+    console.log(`[removeExamFromClass] Removed exam. New assignedExams: ${JSON.stringify(result.assignedExams)}`);
   }
 }
