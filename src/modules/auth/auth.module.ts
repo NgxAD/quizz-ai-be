@@ -7,11 +7,13 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
+import { MailerService } from './mailer.service';
 import { User, UserSchema } from '../../schemas/user.schema';
 
 @Module({
   imports: [
     PassportModule,
+    ConfigModule,
     MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -29,7 +31,7 @@ import { User, UserSchema } from '../../schemas/user.schema';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, GoogleStrategy],
+  providers: [AuthService, JwtStrategy, GoogleStrategy, MailerService],
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

@@ -11,6 +11,7 @@ import { User, UserDocument } from '../../schemas/user.schema';
 import { UserRole } from '../../common/enums/role.enum';
 import { RegisterDto } from './dtos/register.dto';
 import { LoginDto } from './dtos/login.dto';
+import { MailerService } from './mailer.service';
 import { v4 as uuidv4 } from 'uuid';
 
 interface AuthSession {
@@ -30,6 +31,7 @@ export class AuthService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
+    private mailerService: MailerService,
   ) {
     // Clean up expired sessions every 30 seconds
     setInterval(() => {
@@ -346,6 +348,121 @@ export class AuthService {
     
     return {
       message: 'Lấy thông tin người dùng thành công',
+      user: userWithoutPassword,
+    };
+  }
+
+  // Generate a random 6-digit code
+  private generateResetCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  async requestPasswordReset(email: string) {
+    const user = await this.userModel.findOne({ email });
+    if (!user) {
+      // Don't reveal if email exists for security reasons
+      throw new BadRequestException('Nếu email này tồn tại trong hệ thống, bạn sẽ nhận được mã xác minh');
+    }
+
+    // Generate 6-digit code
+    const resetCode = this.generateResetCode();
+    const resetCodeExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+
+    // Save reset code to database
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { resetCode, resetCodeExpiry }
+    );
+
+    // Send email with reset code
+    const emailSent = await this.mailerService.sendPasswordResetCode(email, resetCode);
+    
+    if (!emailSent) {
+      console.warn(`Failed to send password reset email to ${email}, but code was saved to DB`);
+    }
+    
+    return {
+      message: 'Nếu email này tồn tại trong hệ thống, bạn sẽ nhận được mã xác minh',
+    };
+  }
+
+  async verifyResetCode(email: string, code: string) {
+    const user = await this.userModel.findOne({ email });
+    if (!user) {
+      throw new UnauthorizedException('Email không tồn tại');
+    }
+
+    if (!user.resetCode || !user.resetCodeExpiry) {
+      throw new BadRequestException('Không có yêu cầu đặt lại mật khẩu nào. Vui lòng yêu cầu lại.');
+    }
+
+    // Check if code is expired
+    if (new Date() > user.resetCodeExpiry) {
+      // Clear expired code
+      await this.userModel.updateOne(
+        { _id: user._id },
+        { resetCode: null, resetCodeExpiry: null }
+      );
+      throw new BadRequestException('Mã xác minh đã hết hạn. Vui lòng yêu cầu lại.');
+    }
+
+    // Check if code matches
+    if (user.resetCode !== code) {
+      throw new UnauthorizedException('Mã xác minh không đúng');
+    }
+
+    return {
+      message: 'Mã xác minh hợp lệ',
+    };
+  }
+
+  async resetPassword(email: string, code: string, newPassword: string) {
+    const user = await this.userModel.findOne({ email });
+    if (!user) {
+      throw new UnauthorizedException('Email không tồn tại');
+    }
+
+    if (!user.resetCode || !user.resetCodeExpiry) {
+      throw new BadRequestException('Không có yêu cầu đặt lại mật khẩu nào. Vui lòng yêu cầu lại.');
+    }
+
+    // Check if code is expired
+    if (new Date() > user.resetCodeExpiry) {
+      // Clear expired code
+      await this.userModel.updateOne(
+        { _id: user._id },
+        { resetCode: null, resetCodeExpiry: null }
+      );
+      throw new BadRequestException('Mã xác minh đã hết hạn. Vui lòng yêu cầu lại.');
+    }
+
+    // Check if code matches
+    if (user.resetCode !== code) {
+      throw new UnauthorizedException('Mã xác minh không đúng');
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update password and clear reset code
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      user._id,
+      {
+        password: hashedPassword,
+        resetCode: null,
+        resetCodeExpiry: null,
+      },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+
+    const { password: _, ...userWithoutPassword } = updatedUser.toObject();
+
+    return {
+      message: 'Mật khẩu đã được đặt lại thành công',
       user: userWithoutPassword,
     };
   }

@@ -47,6 +47,12 @@ export class User {
 
   @Prop({ default: false })
   isTeacherApproved: boolean;
+
+  @Prop({ required: false })
+  resetCode: string;
+
+  @Prop({ required: false })
+  resetCodeExpiry: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

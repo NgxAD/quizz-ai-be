@@ -4,6 +4,9 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dtos/register.dto';
 import { LoginDto } from './dtos/login.dto';
 import { UpdateProfileDto } from './dtos/update-profile.dto';
+import { RequestPasswordResetDto } from './dtos/request-password-reset.dto';
+import { VerifyResetCodeDto } from './dtos/verify-reset-code.dto';
+import { ResetPasswordDto } from './dtos/reset-password.dto';
 import type { Response } from 'express';
 
 @Controller('auth')
@@ -82,5 +85,27 @@ export class AuthController {
   @UseGuards(AuthGuard('jwt'))
   async updateProfile(@Req() req, @Body() updateProfileDto: UpdateProfileDto) {
     return this.authService.updateProfile(req.user.sub, updateProfileDto);
+  }
+
+  @Post('request-password-reset')
+  @HttpCode(200)
+  async requestPasswordReset(@Body() requestPasswordResetDto: RequestPasswordResetDto) {
+    return this.authService.requestPasswordReset(requestPasswordResetDto.email);
+  }
+
+  @Post('verify-reset-code')
+  @HttpCode(200)
+  async verifyResetCode(@Body() verifyResetCodeDto: VerifyResetCodeDto) {
+    return this.authService.verifyResetCode(verifyResetCodeDto.email, verifyResetCodeDto.code);
+  }
+
+  @Post('reset-password')
+  @HttpCode(200)
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(
+      resetPasswordDto.email,
+      resetPasswordDto.code,
+      resetPasswordDto.password
+    );
   }
 }
